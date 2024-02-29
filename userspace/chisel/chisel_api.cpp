@@ -16,16 +16,13 @@ limitations under the License.
 
 */
 
-#include "strl.h"
-#include "sinsp.h"
-#include "sinsp_int.h"
-#include "chisel.h"
-#include "chisel_api.h"
-#include "filter.h"
-#include "filterchecks.h"
-#ifdef HAS_ANALYZER
-#include "analyzer.h"
-#endif
+#include <libscap/strl.h>
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
+#include <chisel/chisel.h>
+#include <chisel/chisel_api.h>
+#include <libsinsp/filter.h>
+#include <libsinsp/filterchecks.h>
 
 #define HAS_LUA_CHISELS
 
@@ -322,9 +319,9 @@ int lua_cbacks::request_field(lua_State *ls)
 		throw sinsp_exception("chisel error");
 	}
 
-	sinsp_filter_check* chk = s_filterlist.new_filter_check_from_fldname(fld,
+	auto chk = s_filterlist.new_filter_check_from_fldname(fld,
 		inspector,
-		false);
+		false).release();
 
 	if(chk == NULL)
 	{
@@ -712,10 +709,9 @@ int lua_cbacks::get_machine_info(lua_State *ls)
 
 int lua_cbacks::get_thread_table_int(lua_State *ls, bool include_fds, bool barebone)
 {
-	unordered_map<int64_t, sinsp_fdinfo_t>::iterator fdit;
 	uint32_t j;
-	sinsp_filter_compiler* compiler = NULL;
-	sinsp_filter* filter = NULL;
+	std::unique_ptr<sinsp_filter_compiler> compiler;
+	std::unique_ptr<sinsp_filter> filter;
 	sinsp_evt tevt;
 	scap_evt tscapevt;
 
@@ -743,7 +739,7 @@ int lua_cbacks::get_thread_table_int(lua_State *ls, bool include_fds, bool bareb
 		{
 			try
 			{
-				compiler = new sinsp_filter_compiler(ch->m_inspector, filterstr, true);
+				compiler = std::make_unique<sinsp_filter_compiler>(ch->m_inspector, filterstr);
 				filter = compiler->compile();
 			}
 			catch(const sinsp_exception& e)
@@ -753,17 +749,16 @@ int lua_cbacks::get_thread_table_int(lua_State *ls, bool include_fds, bool bareb
 				throw sinsp_exception("chisel error");
 			}
 
-			tscapevt.ts = ch->m_inspector->m_lastevent_ts;
+			tscapevt.ts = ch->m_inspector->get_lastevent_ts();
 			tscapevt.type = PPME_SYSCALL_READ_X;
 			tscapevt.len = 0;
 			tscapevt.nparams = 0;
 
-			tevt.m_inspector = ch->m_inspector;
-			tevt.m_info = &(g_infotables.m_event_info[PPME_SYSCALL_READ_X]);
-			tevt.m_pevt = NULL;
-			tevt.m_cpuid = 0;
-			tevt.m_evtnum = 0;
-			tevt.m_pevt = &tscapevt;
+			tevt.set_inspector(ch->m_inspector);
+			tevt.set_info(&(g_infotables.m_event_info[PPME_SYSCALL_READ_X]));
+			tevt.set_scap_evt(&tscapevt);
+			tevt.set_cpuid(0);
+			tevt.set_num(0);
 		}
 	}
 
@@ -789,22 +784,22 @@ int lua_cbacks::get_thread_table_int(lua_State *ls, bool include_fds, bool bareb
 		{
 			bool match = false;
 
-			for(fdit = fdtable->m_table.begin(); fdit != fdtable->m_table.end(); ++fdit)
-			{
-				tevt.m_tinfo = &tinfo;
-				tevt.m_fdinfo = &(fdit->second);
+			fdtable->loop([&](int64_t fd, sinsp_fdinfo& fdi) {
+				tevt.set_tinfo(&tinfo);
+				tevt.set_fd_info(&fdi);
 				tscapevt.tid = tinfo.m_tid;
-				int64_t tlefd = tevt.m_tinfo->m_lastevent_fd;
-				tevt.m_tinfo->m_lastevent_fd = fdit->first;
+				int64_t tlefd = tevt.get_tinfo()->m_lastevent_fd;
+				tevt.get_tinfo()->m_lastevent_fd = fd;
 
 				if(filter->run(&tevt))
 				{
 					match = true;
-					break;
+					return false; // break out of the loop
 				}
 
-				tevt.m_tinfo->m_lastevent_fd = tlefd;
-			}
+				tevt.get_tinfo()->m_lastevent_fd = tlefd;
+				return true;
+			});
 
 			if(!match)
 			{
@@ -913,36 +908,36 @@ int lua_cbacks::get_thread_table_int(lua_State *ls, bool include_fds, bool bareb
 
 		if(include_fds)
 		{
-			for(fdit = fdtable->m_table.begin(); fdit != fdtable->m_table.end(); ++fdit)
-			{
-				tevt.m_tinfo = &tinfo;
-				tevt.m_fdinfo = &(fdit->second);
+			fdtable->loop([&](int64_t fd, sinsp_fdinfo& fdi) {
+				tevt.set_tinfo(&tinfo);
+				tevt.set_fd_info(&fdi);
 				tscapevt.tid = tinfo.m_tid;
-				int64_t tlefd = tevt.m_tinfo->m_lastevent_fd;
-				tevt.m_tinfo->m_lastevent_fd = fdit->first;
+				int64_t tlefd = tevt.get_tinfo()->m_lastevent_fd;
+				tevt.get_tinfo()->m_lastevent_fd = fd;
 
 				if(filter != NULL)
 				{
 					if(filter->run(&tevt) == false)
 					{
-						continue;
+						// continue the loop to next iteration
+						return true;
 					}
 				}
 
-				tevt.m_tinfo->m_lastevent_fd = tlefd;
+				tevt.get_tinfo()->m_lastevent_fd = tlefd;
 
 				lua_newtable(ls);
 				if(!barebone)
 				{
 					lua_pushliteral(ls, "name");
-					lua_pushstring(ls, fdit->second.tostring_clean().c_str());
+					lua_pushstring(ls, fdi.tostring_clean().c_str());
 					lua_settable(ls, -3);
 					lua_pushliteral(ls, "type");
-					lua_pushstring(ls, fdit->second.get_typestring());
+					lua_pushstring(ls, fdi.get_typestring());
 					lua_settable(ls, -3);
 				}
 
-				scap_fd_type evt_type = fdit->second.m_type;
+				scap_fd_type evt_type = fdi.m_type;
 				if(evt_type == SCAP_FD_IPV4_SOCK || evt_type == SCAP_FD_IPV4_SERVSOCK ||
 				   evt_type == SCAP_FD_IPV6_SOCK || evt_type == SCAP_FD_IPV6_SERVSOCK)
 				{
@@ -957,38 +952,38 @@ int lua_cbacks::get_thread_table_int(lua_State *ls, bool include_fds, bool bareb
 					{
 						include_client = true;
 						af = AF_INET;
-						cip = (uint8_t*)&(fdit->second.m_sockinfo.m_ipv4info.m_fields.m_sip);
-						sip = (uint8_t*)&(fdit->second.m_sockinfo.m_ipv4info.m_fields.m_dip);
-						cport = fdit->second.m_sockinfo.m_ipv4info.m_fields.m_sport;
-						sport = fdit->second.m_sockinfo.m_ipv4info.m_fields.m_dport;
-						is_server = fdit->second.is_role_server();
+						cip = (uint8_t*)&(fdi.m_sockinfo.m_ipv4info.m_fields.m_sip);
+						sip = (uint8_t*)&(fdi.m_sockinfo.m_ipv4info.m_fields.m_dip);
+						cport = fdi.m_sockinfo.m_ipv4info.m_fields.m_sport;
+						sport = fdi.m_sockinfo.m_ipv4info.m_fields.m_dport;
+						is_server = fdi.is_role_server();
 					}
 					else if (evt_type == SCAP_FD_IPV4_SERVSOCK)
 					{
 						include_client = false;
 						af = AF_INET;
 						cip = NULL;
-						sip = (uint8_t*)&(fdit->second.m_sockinfo.m_ipv4serverinfo.m_ip);
-						sport = fdit->second.m_sockinfo.m_ipv4serverinfo.m_port;
+						sip = (uint8_t*)&(fdi.m_sockinfo.m_ipv4serverinfo.m_ip);
+						sport = fdi.m_sockinfo.m_ipv4serverinfo.m_port;
 						is_server = true;
 					}
 					else if (evt_type == SCAP_FD_IPV6_SOCK)
 					{
 						include_client = true;
 						af = AF_INET6;
-						cip = (uint8_t*)&(fdit->second.m_sockinfo.m_ipv6info.m_fields.m_sip);
-						sip = (uint8_t*)&(fdit->second.m_sockinfo.m_ipv6info.m_fields.m_dip);
-						cport = fdit->second.m_sockinfo.m_ipv6info.m_fields.m_sport;
-						sport = fdit->second.m_sockinfo.m_ipv6info.m_fields.m_dport;
-						is_server = fdit->second.is_role_server();
+						cip = (uint8_t*)&(fdi.m_sockinfo.m_ipv6info.m_fields.m_sip);
+						sip = (uint8_t*)&(fdi.m_sockinfo.m_ipv6info.m_fields.m_dip);
+						cport = fdi.m_sockinfo.m_ipv6info.m_fields.m_sport;
+						sport = fdi.m_sockinfo.m_ipv6info.m_fields.m_dport;
+						is_server = fdi.is_role_server();
 					}
 					else
 					{
 						include_client = false;
 						af = AF_INET6;
 						cip = NULL;
-						sip = (uint8_t*)&(fdit->second.m_sockinfo.m_ipv6serverinfo.m_ip);
-						sport = fdit->second.m_sockinfo.m_ipv6serverinfo.m_port;
+						sip = (uint8_t*)&(fdi.m_sockinfo.m_ipv6serverinfo.m_ip);
+						sport = fdi.m_sockinfo.m_ipv6serverinfo.m_port;
 						is_server = true;
 					}
 
@@ -1039,7 +1034,7 @@ int lua_cbacks::get_thread_table_int(lua_State *ls, bool include_fds, bool bareb
 
 					// l4proto
 					const char* l4ps;
-					scap_l4_proto l4p = fdit->second.get_l4proto();
+					scap_l4_proto l4p = fdi.get_l4proto();
 
 					switch(l4p)
 					{
@@ -1069,8 +1064,9 @@ int lua_cbacks::get_thread_table_int(lua_State *ls, bool include_fds, bool bareb
 				// is_server
 				string l4proto;
 
-				lua_rawseti(ls,-2, (uint32_t)fdit->first);
-			}
+				lua_rawseti(ls,-2, (uint32_t)fd);
+				return true;
+			});
 		}
 
 
@@ -1082,11 +1078,6 @@ int lua_cbacks::get_thread_table_int(lua_State *ls, bool include_fds, bool bareb
 		lua_rawseti(ls,-2, (uint32_t)tinfo.m_tid);
 		return true;
 	});
-
-	if(filter)
-	{
-		delete filter;
-	}
 
 	return 1;
 }
@@ -1114,7 +1105,6 @@ int lua_cbacks::get_thread_table_barebone_nofds(lua_State *ls)
 int lua_cbacks::get_container_table(lua_State *ls)
 {
 #ifndef _WIN32
-	unordered_map<int64_t, sinsp_fdinfo_t>::iterator fdit;
 	uint32_t j;
 	sinsp_evt tevt;
 
@@ -1294,7 +1284,7 @@ int lua_cbacks::get_lastevent_ts(lua_State *ls)
 	ASSERT(ch);
 	ASSERT(ch->m_lua_cinfo);
 
-	lua_pushstring(ls, to_string(ch->m_inspector->m_lastevent_ts).c_str());
+	lua_pushstring(ls, to_string(ch->m_inspector->get_lastevent_ts()).c_str());
 
 	return 1;
 }
@@ -1477,7 +1467,7 @@ int lua_cbacks::udp_send(lua_State *ls)
 	string message(lua_tostring(ls, 1));
 
 	if(sendto(ch->m_udp_socket, message.c_str(), message.size(), 0,
-		(struct sockaddr *)&ch->m_serveraddr, sizeof(ch->m_serveraddr)) < 0)
+		(sockaddr*)&ch->m_serveraddr, sizeof(ch->m_serveraddr)) < 0)
 	{
 		string err = "udp_send error: cannot send the buffer: ";
 		fprintf(stderr, "%s\n", err.c_str());
@@ -1504,11 +1494,9 @@ int lua_cbacks::get_read_progress(lua_State *ls)
 	return 1;
 }
 
-#ifdef HAS_ANALYZER
 int lua_cbacks::push_metric(lua_State *ls)
 {
-	statsd_metric metric;
-	metric.m_type = statsd_metric::type_t::GAUGE;
+	chisel_metric metric;
 
 	lua_getglobal(ls, "sichisel");
 
@@ -1579,5 +1567,5 @@ int lua_cbacks::push_metric(lua_State *ls)
 	return 0;
 }
 
-#endif // HAS_ANALYZER
+
 #endif // HAS_LUA_CHISELS

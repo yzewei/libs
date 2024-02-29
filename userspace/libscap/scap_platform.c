@@ -16,11 +16,11 @@ limitations under the License.
 
 */
 
-#include "scap_platform_impl.h"
-#include "scap_platform.h"
+#include <libscap/scap_platform_impl.h>
+#include <libscap/scap_platform.h>
 
-#include "scap.h"
-#include "scap-int.h"
+#include <libscap/scap.h>
+#include <libscap/scap-int.h>
 
 int32_t scap_generic_init_platform(struct scap_platform* platform, char* lasterr, struct scap_open_args* oargs)
 {
@@ -48,6 +48,12 @@ static int32_t scap_generic_close_platform(struct scap_platform* platform)
 	{
 		scap_proc_free_table(&platform->m_proclist);
 		platform->m_proclist.m_proclist = NULL;
+	}
+
+	if(platform->m_driver_procinfo != NULL)
+	{
+		scap_free_proclist_info(platform->m_driver_procinfo);
+		platform->m_driver_procinfo = NULL;
 	}
 
 	return SCAP_SUCCESS;

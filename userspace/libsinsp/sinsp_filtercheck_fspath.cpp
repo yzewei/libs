@@ -17,11 +17,11 @@ limitations under the License.
 */
 
 #include <filesystem>
-#include "sinsp_filtercheck_fspath.h"
-#include "sinsp_filtercheck_event.h"
-#include "sinsp_filtercheck_fd.h"
-#include "sinsp.h"
-#include "sinsp_int.h"
+#include <libsinsp/sinsp_filtercheck_fspath.h>
+#include <libsinsp/sinsp_filtercheck_event.h>
+#include <libsinsp/sinsp_filtercheck_fd.h>
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
 
 using namespace std;
 
@@ -53,7 +53,7 @@ sinsp_filter_check_fspath::sinsp_filter_check_fspath()
 	m_info.m_desc = "Every syscall that has a filesystem path in its arguments has these fields set with information related to the path arguments. This differs from the fd.* fields as it includes syscalls like unlink, rename, etc. that act directly on filesystem paths as compared to opened file descriptors.";
 	m_info.m_fields = sinsp_filter_check_fspath_fields;
 	m_info.m_nfields = sizeof(sinsp_filter_check_fspath_fields) / sizeof(sinsp_filter_check_fspath_fields[0]);
-	m_info.m_flags = filter_check_info::FL_WORKS_ON_THREAD_TABLE;
+	m_info.m_flags = filter_check_info::FL_NONE;
 };
 
 std::shared_ptr<sinsp_filter_check> sinsp_filter_check_fspath::create_event_check(const char *name,
@@ -219,7 +219,7 @@ void sinsp_filter_check_fspath::set_fspath_checks(std::shared_ptr<filtercheck_ma
 	m_target_checks = target_checks;
 }
 
-sinsp_filter_check* sinsp_filter_check_fspath::allocate_new()
+std::unique_ptr<sinsp_filter_check> sinsp_filter_check_fspath::allocate_new()
 {
 	// If not yet populated, do so now. The maps will be empty
 	// *only* for the initial filtercheck created in
@@ -229,7 +229,7 @@ sinsp_filter_check* sinsp_filter_check_fspath::allocate_new()
 		create_fspath_checks();
 	}
 
-	sinsp_filter_check_fspath* ret = new sinsp_filter_check_fspath();
+	auto ret = std::make_unique<sinsp_filter_check_fspath>();
 
 	ret->set_fspath_checks(m_success_checks, m_path_checks, m_source_checks, m_target_checks);
 
@@ -248,7 +248,7 @@ uint8_t* sinsp_filter_check_fspath::extract(sinsp_evt* evt, OUT uint32_t* len, b
 		return NULL;
 	}
 
-	std::optional<std::reference_wrapper<std::string>> enter_param;
+	std::optional<std::reference_wrapper<const std::string>> enter_param;
 	std::vector<extract_value_t> extract_values;
 
 	switch(m_field_id)

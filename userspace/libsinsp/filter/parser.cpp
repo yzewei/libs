@@ -19,10 +19,11 @@ limitations under the License.
 #include <cstring>
 #include <iterator>
 #include <memory>
-#include "escaping.h"
-#include "parser.h"
-#include "../utils.h"
-#include "../sinsp_exception.h"
+#include <libsinsp/filter/escaping.h>
+#include <libsinsp/filter/parser.h>
+#include <libsinsp/utils.h>
+#include <libsinsp/sinsp_exception.h>
+
 
 #include <re2/re2.h>
 
@@ -59,8 +60,8 @@ static const vector<string> binary_num_ops =
 
 static const vector<string> binary_str_ops =
 {
-	"==", "=", "!=", "glob ", "contains ", "icontains ", "bcontains ",
-	"startswith ", "bstartswith ", "endswith ",
+	"==", "=", "!=", "glob ", "iglob ", "contains ", "icontains ",
+	"bcontains ", "startswith ", "bstartswith ", "endswith ",
 };
 
 static const vector<string> binary_list_ops =
@@ -289,58 +290,7 @@ std::unique_ptr<ast::expr> parser::parse_check()
 
 	if (lex_field_name())
 	{
-		string field = m_last_token;
-		string field_arg = "";
-		if (lex_helper_str("["))
-		{
-			if (!lex_quoted_str() && !lex_field_arg_bare_str())
-			{
-				throw sinsp_exception("expected a valid field argument: a quoted string or a bare string");
-			}
-			field_arg = m_last_token;
-			if (!lex_helper_str("]"))
-			{
-				throw sinsp_exception("expected a ']' token");
-			}
-		}
-
-		lex_blank();
-		if (lex_unary_op())
-		{
-			depth_pop();
-			return ast::unary_check_expr::create(field, field_arg, trim_str(m_last_token), pos);
-		}
-
-		string op = "";
-		std::unique_ptr<ast::expr> value;
-		lex_blank();
-		if (lex_num_op())
-		{
-			op = m_last_token;
-			value = parse_num_value();
-		}
-		else if (lex_str_op())
-		{
-			op = m_last_token;
-			value = parse_str_value();
-		}
-		else if (lex_list_op())
-		{
-			op = m_last_token;
-			value = parse_list_value();
-		} 
-		else
-		{
-			std::string ops = "";
-			for (const auto &op : supported_operators())
-			{
-				ops += ops.empty() ? "" : ", ";
-				ops += "'" + op + "'";
-			}
-			throw sinsp_exception("expected a valid check operator: one of " + ops);
-		}
-		depth_pop();
-		return ast::binary_check_expr::create(field, field_arg, trim_str(op), std::move(value), pos);
+		return parse_check_field(pos);
 	}
 
 	if (lex_identifier())
@@ -350,6 +300,82 @@ std::unique_ptr<ast::expr> parser::parse_check()
 	}
 
 	throw sinsp_exception("expected a '(' token, a field check, or an identifier");
+}
+
+std::unique_ptr<ast::expr> parser::parse_check_field(libsinsp::filter::ast::pos_info& pos)
+{
+	string field = m_last_token;
+	string field_arg = "";
+
+	if(lex_helper_str("["))
+	{
+		parse_check_field_arg(field_arg);
+	}
+
+	lex_blank();
+
+	return parse_check_condition(field, field_arg, pos);
+}
+
+
+void parser::parse_check_field_arg(std::string& field_arg)
+{
+	if(!lex_quoted_str() && !lex_field_arg_bare_str())
+	{
+		throw sinsp_exception("expected a valid field argument: a quoted string or a bare string");
+	}
+
+	field_arg = m_last_token;
+
+	if(!lex_helper_str("]"))
+	{
+		throw sinsp_exception("expected a ']' token");
+	}
+}
+
+std::unique_ptr<ast::expr> parser::parse_check_condition(const std::string& field, const std::string& field_arg,
+							 libsinsp::filter::ast::pos_info& pos)
+{
+	if(lex_unary_op())
+	{
+		depth_pop();
+		return ast::unary_check_expr::create(field, field_arg, trim_str(m_last_token), pos);
+	}
+
+	string op = "";
+	std::unique_ptr<ast::expr> value;
+
+	lex_blank();
+
+	if(lex_num_op())
+	{
+		op = m_last_token;
+		value = parse_num_value();
+	}
+	else if(lex_str_op())
+	{
+		op = m_last_token;
+		value = parse_str_value();
+	}
+	else if(lex_list_op())
+	{
+		op = m_last_token;
+		value = parse_list_value();
+	}
+	else
+	{
+		std::string ops = "";
+		for(const auto& op : supported_operators())
+		{
+			ops += ops.empty() ? "" : ", ";
+			ops += "'" + op + "'";
+		}
+		throw sinsp_exception("expected a valid check operator: one of " + ops);
+	}
+
+	depth_pop();
+
+	return ast::binary_check_expr::create(field, field_arg, trim_str(op), std::move(value), pos);
 }
 
 std::unique_ptr<ast::value_expr> parser::parse_num_value()

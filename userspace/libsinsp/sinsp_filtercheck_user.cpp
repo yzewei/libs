@@ -16,9 +16,9 @@ limitations under the License.
 
 */
 
-#include "sinsp_filtercheck_user.h"
-#include "sinsp.h"
-#include "sinsp_int.h"
+#include <libsinsp/sinsp_filtercheck_user.h>
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
 
 using namespace std;
 
@@ -56,12 +56,12 @@ sinsp_filter_check_user::sinsp_filter_check_user()
 	m_info.m_desc = "Information about the user executing the specific event.";
 	m_info.m_fields = sinsp_filter_check_user_fields;
 	m_info.m_nfields = sizeof(sinsp_filter_check_user_fields) / sizeof(sinsp_filter_check_user_fields[0]);
-	m_info.m_flags = filter_check_info::FL_WORKS_ON_THREAD_TABLE;
+	m_info.m_flags = filter_check_info::FL_NONE;
 }
 
-sinsp_filter_check* sinsp_filter_check_user::allocate_new()
+std::unique_ptr<sinsp_filter_check> sinsp_filter_check_user::allocate_new()
 {
-	return (sinsp_filter_check*) new sinsp_filter_check_user();
+	return std::make_unique<sinsp_filter_check_user>();
 }
 
 uint8_t* sinsp_filter_check_user::extract(sinsp_evt *evt, OUT uint32_t* len, bool sanitize_strings)

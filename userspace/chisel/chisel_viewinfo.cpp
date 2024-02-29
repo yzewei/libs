@@ -16,8 +16,8 @@ limitations under the License.
 
 */
 #include <algorithm>
-#include <sinsp.h>
-#include "chisel_viewinfo.h"
+#include <libsinsp/sinsp.h>
+#include <chisel/chisel_viewinfo.h>
 
 using namespace std;
 
@@ -287,7 +287,7 @@ chisel_view_column_info* chisel_view_info::get_key()
 	return NULL;
 }
 
-string chisel_view_info::get_filter(uint32_t depth)
+string chisel_view_info::get_filter(uint32_t depth) const
 {
 	if(m_filter.find("%depth+1") != string::npos)
 	{
@@ -323,13 +323,13 @@ void chisel_view_manager::add(chisel_view_info* vinfo)
 	m_views.push_back(*vinfo);
 }
 
-typedef struct view_cmp
+struct view_cmp
 {
 	bool operator()(const chisel_view_info& src, const chisel_view_info& dst)
 	{
 		return src.m_name < dst.m_name;
 	}
-}table_row_cmp;
+};
 
 void chisel_view_manager::sort_views()
 {

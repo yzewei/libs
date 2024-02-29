@@ -25,7 +25,7 @@ limitations under the License.
 #include <list>
 #include <string>
 #include <vector>
-#include "container_engine/sinsp_container_type.h"
+#include <libsinsp/container_engine/sinsp_container_type.h>
 #include "json/json.h"
 
 class sinsp;
@@ -256,6 +256,7 @@ public:
 	};
 
 	sinsp_container_info(sinsp_container_lookup &&lookup = sinsp_container_lookup()):
+		m_type(CT_UNKNOWN),
 		m_container_ip(0),
 		m_privileged(false),
 		m_memory_limit(0),

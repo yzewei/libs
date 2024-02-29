@@ -17,9 +17,9 @@ limitations under the License.
 */
 
 #include <gtest/gtest.h>
-#include <plugin.h>
+#include <libsinsp/plugin.h>
 
-#include "sinsp_with_test_input.h"
+#include <sinsp_with_test_input.h>
 #include "test_utils.h"
 #include "plugins/test_plugins.h"
 
@@ -639,4 +639,62 @@ TEST_F(sinsp_with_test_input, plugin_tables)
 	// clear all
 	ASSERT_NO_THROW(table->clear_entries());
 	ASSERT_EQ(table->entries_count(), 0);
+}
+
+// Scenario: we load a plugin expecting it to log
+// when it's initialized and destroyed.
+// We use a callback attached to the logger to assert the message.
+// When the inspector goes out of scope,
+// the plugin is automatically destroyed.
+TEST(sinsp_plugin, plugin_logging)
+{
+	{
+		std::string tmp;
+		sinsp i;
+		plugin_api api;
+		get_plugin_api_sample_plugin_extract(api);
+
+		// the plugin is logging with a NULL component, so we expect the component to fallback to the plugin name
+		api.get_name = [](){ return "plugin_name"; };
+
+		libsinsp_logger()->add_callback_log([](std::string&& str, sinsp_logger::severity sev) {
+			std::string expected = "plugin_name: initializing plugin..."; 
+			ASSERT_TRUE(std::equal(expected.rbegin(), expected.rend(), str.rbegin()));
+		});
+
+		auto p = i.register_plugin(&api);
+		p->init("", tmp);
+
+		libsinsp_logger()->remove_callback_log();
+		libsinsp_logger()->add_callback_log([](std::string&& str, sinsp_logger::severity sev) {
+			std::string expected = "plugin_name: destroying plugin..."; 
+			ASSERT_TRUE(std::equal(expected.rbegin(), expected.rend(), str.rbegin()));
+		});
+	}
+
+	libsinsp_logger()->remove_callback_log();
+}
+
+// Scenario: we provide the plugin with a new configuration,
+// expecting it to log when it's notified.
+TEST(sinsp_plugin, plugin_set_config)
+{
+	std::string tmp;
+	sinsp i;
+	plugin_api api;
+	get_plugin_api_sample_plugin_extract(api);
+
+	api.get_name = [](){ return "plugin_name"; };
+
+	auto p = i.register_plugin(&api);
+	p->init("", tmp);
+
+	libsinsp_logger()->add_callback_log([](std::string&& str, sinsp_logger::severity sev) {
+		std::string expected = "plugin_name: new config!"; 
+		ASSERT_TRUE(std::equal(expected.rbegin(), expected.rend(), str.rbegin()));
+	});
+
+	ASSERT_TRUE(p->set_config("some config"));
+
+	libsinsp_logger()->remove_callback_log();
 }

@@ -1,4 +1,5 @@
 #include "../../event_class/event_class.h"
+#include "../../helpers/file_opener.h"
 
 #if defined(__NR_dup) && defined(__NR_openat) && defined(__NR_close)
 TEST(SyscallExit, dupX)
@@ -9,13 +10,12 @@ TEST(SyscallExit, dupX)
 
 	/*=============================== TRIGGER SYSCALL ===========================*/
 
-	int32_t old_fd = syscall(__NR_openat, AT_FDCWD, ".", O_RDWR | O_TMPFILE);
-	assert_syscall_state(SYSCALL_SUCCESS, "openat", old_fd, NOT_EQUAL, -1);
+	auto fo = file_opener(".", (O_RDWR | O_TMPFILE));
+	int32_t old_fd = fo.get_fd();
 
 	int32_t new_fd = syscall(__NR_dup, old_fd);
 	assert_syscall_state(SYSCALL_SUCCESS, "dup", new_fd, NOT_EQUAL, -1);
 
-	syscall(__NR_close, old_fd);
 	syscall(__NR_close, new_fd);
 
 	/*=============================== TRIGGER SYSCALL ===========================*/

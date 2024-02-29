@@ -16,12 +16,14 @@ limitations under the License.
 
 */
 
-#include "sinsp.h"
-#include "sinsp_int.h"
-#include "utils.h"
-#include "strl.h"
-#include "sinsp_filtercheck.h"
-#include "value_parser.h"
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
+#include <libsinsp/utils.h>
+#include <libscap/strl.h>
+#include <libsinsp/sinsp_filtercheck.h>
+#include <libsinsp/value_parser.h>
+
+#define STRPROPERTY_STORAGE_SIZE	1024
 
 #ifndef _GNU_SOURCE
 //
@@ -38,6 +40,53 @@ void *memmem(const void *haystack, size_t haystacklen, const void *needle, size_
 #include "arpa/inet.h"
 #include <netdb.h>
 #endif
+
+std::string std::to_string(boolop b)
+{
+	switch (b)
+	{
+	case BO_NONE:
+		return "NONE";
+	case BO_NOT:
+		return "NOT";
+	case BO_OR:
+		return "OR";
+	case BO_AND:
+		return "AND";
+	case BO_ORNOT:
+		return "OR_NOT";
+	case BO_ANDNOT:
+		return "AND_NOT";
+	};
+	return "<unset>";
+}
+
+std::string std::to_string(cmpop c)
+{
+	switch (c)
+	{
+	case CO_NONE: return "NONE";
+	case CO_EQ: return "EQ";
+	case CO_NE: return "NE";
+	case CO_LT: return "LT";
+	case CO_LE: return "LE";
+	case CO_GT: return "GT";
+	case CO_GE: return "GE";
+	case CO_CONTAINS: return "CONTAINS";
+	case CO_IN: return "IN";
+	case CO_EXISTS: return "EXISTS";
+	case CO_ICONTAINS: return "ICONTAINS";
+	case CO_STARTSWITH: return "STARTSWITH";
+	case CO_GLOB: return "GLOB";
+	case CO_IGLOB: return "IGLOB";
+	case CO_PMATCH: return "PMATCH";
+	case CO_ENDSWITH: return "ENDSWITH";
+	case CO_INTERSECTS: return "INTERSECTS";
+	case CO_BCONTAINS: return "BCONTAINS";
+	case CO_BSTARTSWITH: return "BSTARTSWITH";
+	}
+	return "<unset>";
+};
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -79,6 +128,9 @@ bool flt_compare_uint64(cmpop op, uint64_t operand1, uint64_t operand2)
 		return false;
 	case CO_GLOB:
 		throw sinsp_exception("'glob' not supported for numeric filters");
+		return false;
+	case CO_IGLOB:
+		throw sinsp_exception("'iglob' not supported for numeric filters");
 		return false;
 	default:
 		throw sinsp_exception("'unknown' not supported for numeric filters");
@@ -123,6 +175,9 @@ bool flt_compare_int64(cmpop op, int64_t operand1, int64_t operand2)
 	case CO_GLOB:
 		throw sinsp_exception("'glob' not supported for numeric filters");
 		return false;
+	case CO_IGLOB:
+		throw sinsp_exception("'iglob' not supported for numeric filters");
+		return false;
 	default:
 		throw sinsp_exception("'unknown' not supported for numeric filters");
 		return false;
@@ -161,6 +216,8 @@ bool flt_compare_string(cmpop op, char* operand1, char* operand2)
 		return (sinsp_utils::endswith(operand1, operand2));
 	case CO_GLOB:
 		return sinsp_utils::glob_match(operand2, operand1);
+	case CO_IGLOB:
+		return sinsp_utils::glob_match(operand2, operand1, true);
 	case CO_LT:
 		return (strcmp(operand1, operand2) < 0);
 	case CO_LE:
@@ -198,6 +255,8 @@ bool flt_compare_buffer(cmpop op, char* operand1, char* operand2, uint32_t op1_l
 		return (sinsp_utils::endswith(operand1, operand2, op1_len, op2_len));
 	case CO_GLOB:
 		throw sinsp_exception("'glob' not supported for buffer filters");
+	case CO_IGLOB:
+		throw sinsp_exception("'iglob' not supported for buffer filters");
 	case CO_LT:
 		throw sinsp_exception("'<' not supported for buffer filters");
 	case CO_LE:
@@ -250,6 +309,9 @@ bool flt_compare_double(cmpop op, double operand1, double operand2)
 	case CO_GLOB:
 		throw sinsp_exception("'glob' not supported for numeric filters");
 		return false;
+	case CO_IGLOB:
+		throw sinsp_exception("'iglob' not supported for numeric filters");
+		return false;
 	default:
 		throw sinsp_exception("'unknown' not supported for numeric filters");
 		return false;
@@ -288,6 +350,9 @@ bool flt_compare_ipv4net(cmpop op, uint64_t operand1, const ipv4net* operand2)
 	case CO_GLOB:
 		throw sinsp_exception("'glob' not supported for numeric filters");
 		return false;
+	case CO_IGLOB:
+		throw sinsp_exception("'iglob' not supported for numeric filters");
+		return false;
 	default:
 		throw sinsp_exception("comparison operator not supported for ipv4 networks");
 	}
@@ -319,6 +384,9 @@ bool flt_compare_ipv6addr(cmpop op, ipv6addr *operand1, ipv6addr *operand2)
 		return false;
 	case CO_GLOB:
 		throw sinsp_exception("'glob' not supported for ipv6 addresses");
+		return false;
+	case CO_IGLOB:
+		throw sinsp_exception("'iglob' not supported for ipv6 addresses");
 		return false;
 	default:
 		throw sinsp_exception("comparison operator not supported for ipv6 addresses");
@@ -352,12 +420,26 @@ bool flt_compare_ipv6net(cmpop op, const ipv6addr *operand1, const ipv6net *oper
 	case CO_GLOB:
 		throw sinsp_exception("'glob' not supported for ipv6 networks");
 		return false;
+	case CO_IGLOB:
+		throw sinsp_exception("'iglob' not supported for ipv6 networks");
+		return false;
 	default:
 		throw sinsp_exception("comparison operator not supported for ipv6 networks");
 	}
 }
 
-bool flt_compare(cmpop op, ppm_param_type type, void* operand1, void* operand2, uint32_t op1_len, uint32_t op2_len)
+// flt_cast takes a pointer to memory, dereferences it as fromT type and casts it
+// to a compatible toT type
+template<class fromT, class toT>
+static inline toT flt_cast(const void* ptr)
+{
+	fromT val;
+	memcpy(&val, ptr, sizeof(fromT));
+
+	return static_cast<toT>(val);
+}
+
+bool flt_compare(cmpop op, ppm_param_type type, const void* operand1, const void* operand2, uint32_t op1_len, uint32_t op2_len)
 {
 	//
 	// sinsp_filter_check_*::compare
@@ -371,34 +453,34 @@ bool flt_compare(cmpop op, ppm_param_type type, void* operand1, void* operand2, 
 	switch(type)
 	{
 	case PT_INT8:
-		return flt_compare_int64(op, (int64_t)*(int8_t*)operand1, (int64_t)*(int8_t*)operand2);
+		return flt_compare_int64(op, flt_cast<int8_t, int64_t>(operand1), flt_cast<int8_t, int64_t>(operand2));
 	case PT_INT16:
-		return flt_compare_int64(op, (int64_t)*(int16_t*)operand1, (int64_t)*(int16_t*)operand2);
+		return flt_compare_int64(op, flt_cast<int16_t, int64_t>(operand1), flt_cast<int16_t, int64_t>(operand2));
 	case PT_INT32:
-		return flt_compare_int64(op, (int64_t)*(int32_t*)operand1, (int64_t)*(int32_t*)operand2);
+		return flt_compare_int64(op, flt_cast<int32_t, int64_t>(operand1), flt_cast<int32_t, int64_t>(operand2));
 	case PT_INT64:
 	case PT_FD:
 	case PT_PID:
 	case PT_ERRNO:
-		return flt_compare_int64(op, *(int64_t*)operand1, *(int64_t*)operand2);
+		return flt_compare_int64(op, flt_cast<int64_t, int64_t>(operand1), flt_cast<int64_t, int64_t>(operand2));
 	case PT_FLAGS8:
 	case PT_ENUMFLAGS8:
 	case PT_UINT8:
 	case PT_SIGTYPE:
-		return flt_compare_uint64(op, (uint64_t)*(uint8_t*)operand1, (uint64_t)*(uint8_t*)operand2);
+		return flt_compare_uint64(op, flt_cast<uint8_t, uint64_t>(operand1), flt_cast<uint8_t, uint64_t>(operand2));
 	case PT_FLAGS16:
 	case PT_UINT16:
 	case PT_ENUMFLAGS16:
 	case PT_PORT:
 	case PT_SYSCALLID:
-		return flt_compare_uint64(op, (uint64_t)*(uint16_t*)operand1, (uint64_t)*(uint16_t*)operand2);
+		return flt_compare_uint64(op, flt_cast<uint16_t, uint64_t>(operand1), flt_cast<uint16_t, uint64_t>(operand2));
 	case PT_UINT32:
 	case PT_FLAGS32:
 	case PT_ENUMFLAGS32:
 	case PT_MODE:
 	case PT_BOOL:
 	case PT_IPV4ADDR:
-		return flt_compare_uint64(op, (uint64_t)*(uint32_t*)operand1, (uint64_t)*(uint32_t*)operand2);
+		return flt_compare_uint64(op, flt_cast<uint32_t, uint64_t>(operand1), flt_cast<uint32_t, uint64_t>(operand2));
 	case PT_IPV4NET:
 		return flt_compare_ipv4net(op, (uint64_t)*(uint32_t*)operand1, (ipv4net*)operand2);
 	case PT_IPV6ADDR:
@@ -434,7 +516,7 @@ bool flt_compare(cmpop op, ppm_param_type type, void* operand1, void* operand2, 
 	case PT_UINT64:
 	case PT_RELTIME:
 	case PT_ABSTIME:
-		return flt_compare_uint64(op, *(uint64_t*)operand1, *(uint64_t*)operand2);
+		return flt_compare_uint64(op, flt_cast<uint64_t, uint64_t>(operand1), flt_cast<uint64_t, uint64_t>(operand2));
 	case PT_CHARBUF:
 	case PT_FSPATH:
 	case PT_FSRELPATH:
@@ -442,7 +524,7 @@ bool flt_compare(cmpop op, ppm_param_type type, void* operand1, void* operand2, 
 	case PT_BYTEBUF:
 		return flt_compare_buffer(op, (char*)operand1, (char*)operand2, op1_len, op2_len);
 	case PT_DOUBLE:
-		return flt_compare_double(op, *(double*)operand1, *(double*)operand2);
+		return flt_compare_double(op, flt_cast<double, double>(operand1), flt_cast<double, double>(operand2));
 	case PT_SOCKADDR:
 	case PT_SOCKTUPLE:
 	case PT_FDLIST:
@@ -455,8 +537,8 @@ bool flt_compare(cmpop op, ppm_param_type type, void* operand1, void* operand2, 
 
 bool flt_compare_avg(cmpop op,
 					 ppm_param_type type,
-					 void* operand1,
-					 void* operand2,
+					 const void* operand1,
+					 const void* operand2,
 					 uint32_t op1_len,
 					 uint32_t op2_len,
 					 uint32_t cnt1,
@@ -792,10 +874,11 @@ char* sinsp_filter_check::rawval_to_string(uint8_t* rawval,
 				return NULL;
 			}
 
-			snprintf(m_getpropertystr_storage,
-					 sizeof(m_getpropertystr_storage),
+			m_getpropertystr_storage.resize(STRPROPERTY_STORAGE_SIZE);
+			snprintf(m_getpropertystr_storage.data(),
+					 STRPROPERTY_STORAGE_SIZE,
 					 prfmt, *(int8_t *)rawval);
-			return m_getpropertystr_storage;
+			return m_getpropertystr_storage.data();
 		case PT_INT16:
 			if(print_format == PF_OCT)
 			{
@@ -816,10 +899,11 @@ char* sinsp_filter_check::rawval_to_string(uint8_t* rawval,
 				return NULL;
 			}
 
-			snprintf(m_getpropertystr_storage,
-					 sizeof(m_getpropertystr_storage),
+			m_getpropertystr_storage.resize(STRPROPERTY_STORAGE_SIZE);
+			snprintf(m_getpropertystr_storage.data(),
+					 STRPROPERTY_STORAGE_SIZE,
 					 prfmt, *(int16_t *)rawval);
-			return m_getpropertystr_storage;
+			return m_getpropertystr_storage.data();
 		case PT_INT32:
 			if(print_format == PF_OCT)
 			{
@@ -840,10 +924,11 @@ char* sinsp_filter_check::rawval_to_string(uint8_t* rawval,
 				return NULL;
 			}
 
-			snprintf(m_getpropertystr_storage,
-					 sizeof(m_getpropertystr_storage),
+			m_getpropertystr_storage.resize(STRPROPERTY_STORAGE_SIZE);
+			snprintf(m_getpropertystr_storage.data(),
+					 STRPROPERTY_STORAGE_SIZE,
 					 prfmt, *(int32_t *)rawval);
-			return m_getpropertystr_storage;
+			return m_getpropertystr_storage.data();
 		case PT_INT64:
 		case PT_PID:
 		case PT_ERRNO:
@@ -870,10 +955,11 @@ char* sinsp_filter_check::rawval_to_string(uint8_t* rawval,
 				prfmt = (char*)"%" PRId64;
 			}
 
-			snprintf(m_getpropertystr_storage,
-					 sizeof(m_getpropertystr_storage),
+			m_getpropertystr_storage.resize(STRPROPERTY_STORAGE_SIZE);
+			snprintf(m_getpropertystr_storage.data(),
+					 STRPROPERTY_STORAGE_SIZE,
 					 prfmt, *(int64_t *)rawval);
-			return m_getpropertystr_storage;
+			return m_getpropertystr_storage.data();
 		case PT_L4PROTO: // This can be resolved in the future
 		case PT_UINT8:
 			if(print_format == PF_OCT)
@@ -895,10 +981,11 @@ char* sinsp_filter_check::rawval_to_string(uint8_t* rawval,
 				return NULL;
 			}
 
-			snprintf(m_getpropertystr_storage,
-					 sizeof(m_getpropertystr_storage),
+			m_getpropertystr_storage.resize(STRPROPERTY_STORAGE_SIZE);
+			snprintf(m_getpropertystr_storage.data(),
+					 STRPROPERTY_STORAGE_SIZE,
 					 prfmt, *(uint8_t *)rawval);
-			return m_getpropertystr_storage;
+			return m_getpropertystr_storage.data();
 		case PT_PORT: // This can be resolved in the future
 		case PT_UINT16:
 			if(print_format == PF_OCT)
@@ -920,10 +1007,11 @@ char* sinsp_filter_check::rawval_to_string(uint8_t* rawval,
 				return NULL;
 			}
 
-			snprintf(m_getpropertystr_storage,
-					 sizeof(m_getpropertystr_storage),
+			m_getpropertystr_storage.resize(STRPROPERTY_STORAGE_SIZE);
+			snprintf(m_getpropertystr_storage.data(),
+					 STRPROPERTY_STORAGE_SIZE,
 					 prfmt, *(uint16_t *)rawval);
-			return m_getpropertystr_storage;
+			return m_getpropertystr_storage.data();
 		case PT_UINT32:
 			if(print_format == PF_OCT)
 			{
@@ -944,10 +1032,11 @@ char* sinsp_filter_check::rawval_to_string(uint8_t* rawval,
 				return NULL;
 			}
 
-			snprintf(m_getpropertystr_storage,
-					 sizeof(m_getpropertystr_storage),
+			m_getpropertystr_storage.resize(STRPROPERTY_STORAGE_SIZE);
+			snprintf(m_getpropertystr_storage.data(),
+					 STRPROPERTY_STORAGE_SIZE,
 					 prfmt, *(uint32_t *)rawval);
-			return m_getpropertystr_storage;
+			return m_getpropertystr_storage.data();
 		case PT_UINT64:
 		case PT_RELTIME:
 		case PT_ABSTIME:
@@ -973,11 +1062,12 @@ char* sinsp_filter_check::rawval_to_string(uint8_t* rawval,
 				ASSERT(false);
 				return NULL;
 			}
-
-			snprintf(m_getpropertystr_storage,
-					 sizeof(m_getpropertystr_storage),
+			
+			m_getpropertystr_storage.resize(STRPROPERTY_STORAGE_SIZE);
+			snprintf(m_getpropertystr_storage.data(),
+					 STRPROPERTY_STORAGE_SIZE,
 					 prfmt, *(uint64_t *)rawval);
-			return m_getpropertystr_storage;
+			return m_getpropertystr_storage.data();
 		case PT_CHARBUF:
 		case PT_FSPATH:
 		case PT_FSRELPATH:
@@ -985,20 +1075,17 @@ char* sinsp_filter_check::rawval_to_string(uint8_t* rawval,
 		case PT_BYTEBUF:
 			if(rawval[len] == 0)
 			{
+				// check if by any chance the byte buff is null-terminated,
+				// in which case we try to treat it as a regular string
 				return (char*)rawval;
 			}
 			else
 			{
-				ASSERT(len < 1024 * 1024);
-
-				if(len >= filter_value()->size())
-				{
-					filter_value()->resize(len + 1);
-				}
-
-				memcpy(filter_value_p(), rawval, len);
-				filter_value_p()[len] = 0;
-				return (char*)filter_value_p();
+				auto copy_len = std::min(len, (uint32_t) STRPROPERTY_STORAGE_SIZE);
+				m_getpropertystr_storage.resize(STRPROPERTY_STORAGE_SIZE);
+				memcpy(m_getpropertystr_storage.data(), rawval, copy_len);
+				m_getpropertystr_storage.data()[copy_len] = 0;
+				return m_getpropertystr_storage.data();
 			}
 		case PT_SOCKADDR:
 			ASSERT(false);
@@ -1016,14 +1103,15 @@ char* sinsp_filter_check::rawval_to_string(uint8_t* rawval,
 				return (char*)"false";
 			}
 		case PT_IPV4ADDR:
-			snprintf(m_getpropertystr_storage,
-						sizeof(m_getpropertystr_storage),
+			m_getpropertystr_storage.resize(STRPROPERTY_STORAGE_SIZE);
+			snprintf(m_getpropertystr_storage.data(),
+						STRPROPERTY_STORAGE_SIZE,
 						"%" PRIu8 ".%" PRIu8 ".%" PRIu8 ".%" PRIu8,
 						rawval[0],
 						rawval[1],
 						rawval[2],
 						rawval[3]);
-			return m_getpropertystr_storage;
+			return m_getpropertystr_storage.data();
 		case PT_IPV6ADDR:
 		{
 			char address[INET6_ADDRSTRLEN];
@@ -1033,9 +1121,10 @@ char* sinsp_filter_check::rawval_to_string(uint8_t* rawval,
 				strlcpy(address, "<NA>", INET6_ADDRSTRLEN);
 			}
 
-			strlcpy(m_getpropertystr_storage, address, sizeof(m_getpropertystr_storage));
+			m_getpropertystr_storage.resize(STRPROPERTY_STORAGE_SIZE);
+			strlcpy(m_getpropertystr_storage.data(), address, STRPROPERTY_STORAGE_SIZE);
 
-			return m_getpropertystr_storage;
+			return m_getpropertystr_storage.data();
 		}
 	        case PT_IPADDR:
 			if(len == sizeof(struct in_addr))
@@ -1052,15 +1141,17 @@ char* sinsp_filter_check::rawval_to_string(uint8_t* rawval,
 			}
 
 		case PT_DOUBLE:
-			snprintf(m_getpropertystr_storage,
-					 sizeof(m_getpropertystr_storage),
+			m_getpropertystr_storage.resize(STRPROPERTY_STORAGE_SIZE);
+			snprintf(m_getpropertystr_storage.data(),
+					 STRPROPERTY_STORAGE_SIZE,
 					 "%.1lf", *(double*)rawval);
-			return m_getpropertystr_storage;
+			return m_getpropertystr_storage.data();
 		case PT_IPNET:
-			snprintf(m_getpropertystr_storage,
-				 sizeof(m_getpropertystr_storage),
+			m_getpropertystr_storage.resize(STRPROPERTY_STORAGE_SIZE);
+			snprintf(m_getpropertystr_storage.data(),
+				 STRPROPERTY_STORAGE_SIZE,
 				 "<IPNET>");
-			return m_getpropertystr_storage;
+			return m_getpropertystr_storage.data();
 		default:
 			ASSERT(false);
 			throw sinsp_exception("wrong param type " + std::to_string((long long) ptype));
@@ -1070,7 +1161,7 @@ char* sinsp_filter_check::rawval_to_string(uint8_t* rawval,
 char* sinsp_filter_check::tostring(sinsp_evt* evt)
 {
 	m_extracted_values.clear();
-	if(!extract_cached(evt, m_extracted_values))
+	if(!extract(evt, m_extracted_values))
 	{
 		return NULL;
 	}
@@ -1087,8 +1178,9 @@ char* sinsp_filter_check::tostring(sinsp_evt* evt)
 			res += rawval_to_string(val.ptr, m_field->m_type, m_field->m_print_format, val.len);
 		}
 		res += ")";
-		strlcpy(m_getpropertystr_storage, res.c_str(), sizeof(m_getpropertystr_storage));
-		return m_getpropertystr_storage;
+		m_getpropertystr_storage.resize(STRPROPERTY_STORAGE_SIZE);
+		strlcpy(m_getpropertystr_storage.data(), res.c_str(), STRPROPERTY_STORAGE_SIZE);
+		return m_getpropertystr_storage.data();
 	}
 	return rawval_to_string(m_extracted_values[0].ptr, m_field->m_type, m_field->m_print_format, m_extracted_values[0].len);
 }
@@ -1101,7 +1193,7 @@ Json::Value sinsp_filter_check::tojson(sinsp_evt* evt)
 	if(jsonval == Json::nullValue)
 	{
 		m_extracted_values.clear();
-		if(!extract_cached(evt, m_extracted_values))
+		if(!extract(evt, m_extracted_values))
 		{
 			return Json::nullValue;
 		}
@@ -1216,17 +1308,16 @@ size_t sinsp_filter_check::parse_filter_value(const char* str, uint32_t len, uin
 	{
 		parsed_len = sinsp_filter_value_parser::string_to_rawval(str, len, storage, storage_len, m_field->m_type);
 	}
-	validate_filter_value(str, len);
 
 	return parsed_len;
 }
 
-const filtercheck_field_info* sinsp_filter_check::get_field_info()
+const filtercheck_field_info* sinsp_filter_check::get_field_info() const
 {
 	return &m_info.m_fields[m_field_id];
 }
 
-bool sinsp_filter_check::can_have_argument()
+bool sinsp_filter_check::can_have_argument() const
 {
 	const filtercheck_field_info *info = get_field_info();
 
@@ -1234,7 +1325,7 @@ bool sinsp_filter_check::can_have_argument()
 		(info->m_flags & EPF_ARG_ALLOWED));
 }
 
-bool sinsp_filter_check::flt_compare(cmpop op, ppm_param_type type, std::vector<extract_value_t>& values, uint32_t op2_len)
+bool sinsp_filter_check::compare_rhs(cmpop op, ppm_param_type type, std::vector<extract_value_t>& values)
 {
 	if (m_info.m_fields[m_field_id].m_flags & EPF_IS_LIST)
 	{
@@ -1345,14 +1436,13 @@ bool sinsp_filter_check::flt_compare(cmpop op, ppm_param_type type, std::vector<
 			+ std::to_string(values.size()) + " were found");
 	}
 
-	return flt_compare(m_cmpop,
+	return compare_rhs(m_cmpop,
 		m_info.m_fields[m_field_id].m_type,
 		values[0].ptr,
-		values[0].len,
-		op2_len);
+		values[0].len);
 }
 
-bool sinsp_filter_check::flt_compare(cmpop op, ppm_param_type type, void* operand1, uint32_t op1_len, uint32_t op2_len)
+bool sinsp_filter_check::compare_rhs(cmpop op, ppm_param_type type, const void* operand1, uint32_t op1_len)
 {
 	if (op == CO_IN || op == CO_PMATCH || op == CO_INTERSECTS)
 	{
@@ -1425,17 +1515,12 @@ bool sinsp_filter_check::flt_compare(cmpop op, ppm_param_type type, void* operan
 				      operand1,
 				      filter_value_p(),
 				      op1_len,
-				      op2_len)
+				      m_val_storage_len)
 			);
 	}
 }
 
-bool sinsp_filter_check::extract(gen_event *evt, OUT std::vector<extract_value_t>& values, bool sanitize_strings)
-{
-	return extract((sinsp_evt *) evt, values, sanitize_strings);
-}
-
-bool sinsp_filter_check::extract(sinsp_evt *evt, OUT std::vector<extract_value_t>& values, bool sanitize_strings)
+bool sinsp_filter_check::extract_nocache(sinsp_evt *evt, OUT std::vector<extract_value_t>& values, bool sanitize_strings)
 {
 	values.clear();
 	extract_value_t val;
@@ -1453,7 +1538,7 @@ uint8_t* sinsp_filter_check::extract(sinsp_evt *evt, OUT uint32_t* len, bool san
 	return NULL;
 }
 
-bool sinsp_filter_check::extract_cached(sinsp_evt *evt, OUT std::vector<extract_value_t>& values, bool sanitize_strings)
+bool sinsp_filter_check::extract(sinsp_evt *evt, OUT std::vector<extract_value_t>& values, bool sanitize_strings)
 {
 	if(m_cache_metrics != NULL)
 	{
@@ -1469,7 +1554,7 @@ bool sinsp_filter_check::extract_cached(sinsp_evt *evt, OUT std::vector<extract_
 		if(en != m_extraction_cache_entry->m_evtnum)
 		{
 			m_extraction_cache_entry->m_evtnum = en;
-			extract(evt, m_extraction_cache_entry->m_res, sanitize_strings);
+			extract_nocache(evt, m_extraction_cache_entry->m_res, sanitize_strings);
 		}
 		else
 		{
@@ -1486,13 +1571,12 @@ bool sinsp_filter_check::extract_cached(sinsp_evt *evt, OUT std::vector<extract_
 	}
 	else
 	{
-		return extract(evt, values, sanitize_strings);
+		return extract_nocache(evt, values, sanitize_strings);
 	}
 }
 
-bool sinsp_filter_check::compare(gen_event *evt)
+bool sinsp_filter_check::compare(sinsp_evt* evt)
 {
-	m_hits++;
 	if(m_cache_metrics != NULL)
 	{
 		m_cache_metrics->m_num_eval++;
@@ -1502,12 +1586,12 @@ bool sinsp_filter_check::compare(gen_event *evt)
 	if(m_eval_cache_entry != NULL &&
 	   !can_have_argument())
 	{
-		uint64_t en = ((sinsp_evt *)evt)->get_num();
+		uint64_t en = evt->get_num();
 
 		if(en != m_eval_cache_entry->m_evtnum)
 		{
 			m_eval_cache_entry->m_evtnum = en;
-			m_eval_cache_entry->m_res = compare((sinsp_evt *) evt);
+			m_eval_cache_entry->m_res = compare_nocache(evt);
 		}
 		else
 		{
@@ -1517,36 +1601,23 @@ bool sinsp_filter_check::compare(gen_event *evt)
 			}
 		}
 
-		if (m_eval_cache_entry->m_res)
-		{
-			m_matched_true++;
-		}
-		m_cached++;
-
 		return m_eval_cache_entry->m_res;
 	}
 	else
 	{
-		auto res = compare((sinsp_evt *) evt);
-		if (res)
-		{
-			m_matched_true++;
-		}
-
-		return res;
+		return compare_nocache(evt);
 	}
 }
 
-bool sinsp_filter_check::compare(sinsp_evt *evt)
+bool sinsp_filter_check::compare_nocache(sinsp_evt* evt)
 {
 	m_extracted_values.clear();
-	if(!extract_cached(evt, m_extracted_values, false))
+	if(!extract(evt, m_extracted_values, false))
 	{
 		return false;
 	}
 
-	return flt_compare(m_cmpop,
+	return compare_rhs(m_cmpop,
 		m_info.m_fields[m_field_id].m_type,
-		m_extracted_values,
-		m_val_storage_len);
+		m_extracted_values);
 }

@@ -1,5 +1,5 @@
-#include <sinsp.h>
-#include <filter.h>
+#include <libsinsp/sinsp.h>
+#include <libsinsp/filter.h>
 #include <gtest/gtest.h>
 #include <list>
 
@@ -7,7 +7,7 @@ using namespace std;
 
 // A mock filtercheck that returns always true or false depending on
 // the passed-in field name. The operation is ignored.
-class mock_compiler_filter_check: public gen_event_filter_check
+class mock_compiler_filter_check : public sinsp_filter_check
 {
 public:
 	inline int32_t parse_field_name(const char* str, bool a, bool n) override
@@ -16,7 +16,7 @@ public:
 		return 0;
 	}
 
-	inline bool compare(gen_event *evt) override
+	inline bool compare(sinsp_evt*) override
 	{
 		if (m_name == "c.true")
 		{
@@ -38,11 +38,11 @@ public:
 	}
 
 	inline void add_filter_value(const char* str, uint32_t l, uint32_t i) override
-	{ 
+	{
 		m_value = string(str, l);
 	}
 
-	inline bool extract(gen_event *e, OUT vector<extract_value_t>& v, bool) override
+	inline bool extract(sinsp_evt *e, OUT vector<extract_value_t>& v, bool) override
 	{
 		return false;
 	}
@@ -52,28 +52,28 @@ public:
 };
 
 // A factory that creates mock filterchecks
-class mock_compiler_filter_factory: public gen_event_filter_factory
+class mock_compiler_filter_factory: public sinsp_filter_factory
 {
 public:
-	mock_compiler_filter_factory(sinsp *inspector) : m_inspector(inspector) {}
+	mock_compiler_filter_factory(sinsp *inspector): sinsp_filter_factory(inspector, m_filterlist) {}
 
-	inline gen_event_filter *new_filter() override
+	inline std::unique_ptr<sinsp_filter> new_filter() const override
 	{
-		return new sinsp_filter(m_inspector);
+		return std::make_unique<sinsp_filter>(m_inspector);
 	}
 
-	inline gen_event_filter_check *new_filtercheck(const char *fldname) override
+	inline std::unique_ptr<sinsp_filter_check> new_filtercheck(const char *fldname) const override
 	{
-		return new mock_compiler_filter_check();
+		return std::make_unique<mock_compiler_filter_check>();
 	}
 
-	inline list<gen_event_filter_factory::filter_fieldclass_info> get_fields() override
+	inline list<sinsp_filter_factory::filter_fieldclass_info> get_fields() const override
 	{
 		return m_list;
 	}
 
-	list<gen_event_filter_factory::filter_fieldclass_info> m_list;
-	sinsp *m_inspector;
+	sinsp_filter_check_list m_filterlist;
+	list<sinsp_filter_factory::filter_fieldclass_info> m_list;
 };
 
 // Compile a filter, pass a mock event to it, and
@@ -82,7 +82,7 @@ public:
 void test_filter_run(bool result, string filter_str)
 {
 	sinsp inspector;
-	std::shared_ptr<gen_event_filter_factory> factory;
+	std::shared_ptr<sinsp_filter_factory> factory;
 	factory.reset(new mock_compiler_filter_factory(&inspector));
 	sinsp_filter_compiler compiler(factory, filter_str);
 	try
@@ -92,7 +92,6 @@ void test_filter_run(bool result, string filter_str)
 		{
 			FAIL() << filter_str << " -> unexpected '" << (result ? "false" : "true") << "' result";
 		}
-		delete filter;
 	}
 	catch(const sinsp_exception& e)
 	{
@@ -101,7 +100,7 @@ void test_filter_run(bool result, string filter_str)
 }
 
 void test_filter_compile(
-		std::shared_ptr<gen_event_filter_factory> factory, 
+		std::shared_ptr<sinsp_filter_factory> factory,
 		string filter_str,
 		bool expect_fail=false)
 {
@@ -109,7 +108,6 @@ void test_filter_compile(
 	try
 	{
 		auto filter = compiler.compile();
-		delete filter;
 		if (expect_fail)
 		{
 			FAIL() << filter_str << " -> expected failure but compilation was successful";
@@ -181,7 +179,7 @@ TEST(sinsp_filter_compiler, str_escape)
 TEST(sinsp_filter_compiler, supported_operators)
 {
 	sinsp inspector;
-	std::shared_ptr<gen_event_filter_factory> factory(new mock_compiler_filter_factory(&inspector));
+	std::shared_ptr<sinsp_filter_factory> factory(new mock_compiler_filter_factory(&inspector));
 
 	// valid operators
 	test_filter_compile(factory, "c.true exists");
@@ -216,7 +214,7 @@ TEST(sinsp_filter_compiler, supported_operators)
 TEST(sinsp_filter_compiler, complex_filter)
 {
 	sinsp inspector;
-	std::shared_ptr<gen_event_filter_factory> factory(new mock_compiler_filter_factory(&inspector));
+	std::shared_ptr<sinsp_filter_factory> factory(new mock_compiler_filter_factory(&inspector));
 
 	// This is derived from the Falco default rule
 	// "Unexpected outbound connection destination" coming from here:

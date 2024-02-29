@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #ifndef _WIN32
 #include <unistd.h>
 #include <sys/stat.h>
@@ -27,28 +28,23 @@ limitations under the License.
 #include <sys/time.h>
 #endif // _WIN32
 
-#include "scap_config.h"
-#include "scap_engines.h"
-#include "scap_open_exception.h"
-#include "scap_platform.h"
-#include "sinsp.h"
-#include "sinsp_int.h"
-#include "filter.h"
-#include "filterchecks.h"
-#include "dns_manager.h"
-#include "plugin.h"
-#include "plugin_manager.h"
-#include "plugin_filtercheck.h"
-#include "strl.h"
-#include "scap-int.h"
+#include <libscap/scap_config.h>
+#include <libscap/scap_engines.h>
+#include <libsinsp/scap_open_exception.h>
+#include <libscap/scap_platform.h>
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
+#include <libsinsp/filter.h>
+#include <libsinsp/filterchecks.h>
+#include <libsinsp/dns_manager.h>
+#include <libsinsp/plugin.h>
+#include <libsinsp/plugin_manager.h>
+#include <libsinsp/plugin_filtercheck.h>
+#include <libscap/strl.h>
+#include <libscap/scap-int.h>
 
-#if defined(HAS_CAPTURE) && !defined(CYGWING_AGENT) && !defined(MINIMAL_BUILD) && !defined(__EMSCRIPTEN__)
+#if !defined(MINIMAL_BUILD) && !defined(__EMSCRIPTEN__)
 #include <curl/curl.h>
-#endif
-
-#ifdef HAS_ANALYZER
-#include "analyzer_int.h"
-#include "analyzer.h"
 #endif
 
 /**
@@ -81,25 +77,21 @@ sinsp::sinsp(bool static_container, const std::string &static_id, const std::str
 	m_inited(false)
 {
 	++instance_count;
-#if !defined(MINIMAL_BUILD) && !defined(CYGWING_AGENT) && !defined(__EMSCRIPTEN__) && defined(HAS_CAPTURE) 
+#if !defined(MINIMAL_BUILD) && !defined(__EMSCRIPTEN__)
 	// used by container_manager
 	curl_global_init(CURL_GLOBAL_DEFAULT);
 #endif
 	m_h = NULL;
 	m_parser = NULL;
 	m_is_dumping = false;
-	m_parser = new sinsp_parser(this);
-	m_thread_manager = new sinsp_thread_manager(this);
+	m_parser = std::make_unique<sinsp_parser>(this);
+	m_thread_manager = std::make_unique<sinsp_thread_manager>(this);
 	m_max_fdtable_size = MAX_FD_TABLE_SIZE;
-	m_inactive_container_scan_time_ns = DEFAULT_INACTIVE_CONTAINER_SCAN_TIME_S * ONE_SECOND_IN_NS;
-	m_deleted_users_groups_scan_time_ns = DEFAULT_DELETED_USERS_GROUPS_SCAN_TIME_S * ONE_SECOND_IN_NS;
+	m_containers_purging_scan_time_ns = DEFAULT_INACTIVE_CONTAINER_SCAN_TIME_S * ONE_SECOND_IN_NS;
+	m_usergroups_purging_scan_time_ns = DEFAULT_DELETED_USERS_GROUPS_SCAN_TIME_S * ONE_SECOND_IN_NS;
 	m_filter = NULL;
-	m_fds_to_remove = new std::vector<int64_t>;
 	m_machine_info = NULL;
 	m_agent_info = NULL;
-#ifdef SIMULATE_DROP_MODE
-	m_isdropping = false;
-#endif
 	m_snaplen = DEFAULT_SNAPLEN;
 	m_buffer_format = sinsp_evt::PF_NORMAL;
 	m_input_fd = 0;
@@ -123,9 +115,7 @@ sinsp::sinsp(bool static_container, const std::string &static_id, const std::str
 	// Unless the cmd line arg "-pc" or "-pcontainer" is supplied this is false
 	m_print_container_data = false;
 
-#if defined(HAS_CAPTURE)
 	m_self_pid = getpid();
-#endif
 
 	m_proc_scan_timeout_ms = SCAP_PROC_SCAN_TIMEOUT_NONE;
 	m_proc_scan_log_interval_ms = SCAP_PROC_SCAN_LOG_NONE;
@@ -140,33 +130,16 @@ sinsp::sinsp(bool static_container, const std::string &static_id, const std::str
 
 	// create state tables registry
 	m_table_registry = std::make_shared<libsinsp::state::table_registry>();
-	m_table_registry->add_table(m_thread_manager);
+	m_table_registry->add_table(m_thread_manager.get());
 }
 
 sinsp::~sinsp()
 {
 	close();
 
-	if(m_fds_to_remove)
-	{
-		delete m_fds_to_remove;
-	}
-
-	if(m_parser)
-	{
-		delete m_parser;
-		m_parser = NULL;
-	}
-
-	if(m_thread_manager)
-	{
-		delete m_thread_manager;
-		m_thread_manager = NULL;
-	}
-
 	m_container_manager.cleanup();
 
-#if defined(HAS_CAPTURE) && !defined(CYGWING_AGENT) && !defined(MINIMAL_BUILD) && !defined(__EMSCRIPTEN__)
+#if !defined(MINIMAL_BUILD) && !defined(__EMSCRIPTEN__)
 	curl_global_cleanup();
 	if (--instance_count == 0)
 	{
@@ -175,7 +148,7 @@ sinsp::~sinsp()
 #endif
 }
 
-bool sinsp::is_initialstate_event(scap_evt* pevent)
+bool sinsp::is_initialstate_event(scap_evt* pevent) const
 {
 	return  pevent->type == PPME_CONTAINER_E ||
 			pevent->type == PPME_CONTAINER_JSON_E ||
@@ -263,7 +236,7 @@ void sinsp::init()
 	m_tid_to_remove = -1;
 	m_lastevent_ts = 0;
 	m_firstevent_ts = 0;
-	m_fds_to_remove->clear();
+	m_fds_to_remove.clear();
 
 	//
 	// If we're reading from file, we try to pre-parse the container events before
@@ -320,14 +293,12 @@ void sinsp::init()
 		set_statsd_port(m_statsd_port);
 	}
 
-#if defined(HAS_CAPTURE)
 	if(is_live())
 	{
 		int32_t res = scap_getpid_global(get_scap_platform(), &m_self_pid);
 		ASSERT(res == SCAP_SUCCESS || res == SCAP_NOT_SUPPORTED);
 		(void)res;
 	}
-#endif
 	m_inited = true;
 }
 
@@ -338,7 +309,7 @@ void sinsp::set_import_users(bool import_users)
 
 /*=============================== OPEN METHODS ===============================*/
 
-void sinsp::open_common(scap_open_args* oargs, const struct scap_vtable* vtable, struct scap_platform* platform,
+void sinsp::open_common(scap_open_args* oargs, const scap_vtable* vtable, scap_platform* platform,
 			sinsp_mode_t mode)
 {
 	libsinsp_logger()->log("Trying to open the right engine!");
@@ -466,14 +437,14 @@ void sinsp::open_kmod(unsigned long driver_buffer_bytes_dim, const libsinsp::eve
 	fill_ppm_sc_of_interest(&oargs, ppm_sc_of_interest);
 
 	/* Engine-specific args. */
-	struct scap_kmod_engine_params params;
+	scap_kmod_engine_params params;
 	params.buffer_bytes_dim = driver_buffer_bytes_dim;
 	oargs.engine_params = &params;
 
-	struct scap_platform* platform = scap_linux_alloc_platform(::on_new_entry_from_proc, this);
+	scap_platform* platform = scap_linux_alloc_platform(::on_new_entry_from_proc, this);
 	if(platform)
 	{
-		auto linux_plat = (struct scap_linux_platform*)platform;
+		auto linux_plat = (scap_linux_platform*)platform;
 		linux_plat->m_linux_vtable = &scap_kmod_linux_vtable;
 	}
 
@@ -498,12 +469,12 @@ void sinsp::open_bpf(const std::string& bpf_path, unsigned long driver_buffer_by
 	fill_ppm_sc_of_interest(&oargs, ppm_sc_of_interest);
 
 	/* Engine-specific args. */
-	struct scap_bpf_engine_params params;
+	scap_bpf_engine_params params;
 	params.buffer_bytes_dim = driver_buffer_bytes_dim;
 	params.bpf_probe = bpf_path.data();
 	oargs.engine_params = &params;
 
-	struct scap_platform* platform = scap_linux_alloc_platform(::on_new_entry_from_proc, this);
+	scap_platform* platform = scap_linux_alloc_platform(::on_new_entry_from_proc, this);
 	open_common(&oargs, &scap_bpf_engine, platform, SINSP_MODE_LIVE);
 #else
 	throw sinsp_exception("BPF engine is not supported in this build");
@@ -514,12 +485,12 @@ void sinsp::open_nodriver(bool full_proc_scan)
 {
 #ifdef HAS_ENGINE_NODRIVER
 	scap_open_args oargs {};
-	struct scap_platform* platform = scap_linux_alloc_platform(::on_new_entry_from_proc, this);
+	scap_platform* platform = scap_linux_alloc_platform(::on_new_entry_from_proc, this);
 	if(platform)
 	{
 		if(!full_proc_scan)
 		{
-			auto linux_plat = (struct scap_linux_platform*)platform;
+			auto linux_plat = (scap_linux_platform*)platform;
 			linux_plat->m_fd_lookup_limit = SCAP_NODRIVER_MAX_FD_LOOKUP;
 			linux_plat->m_minimal_scan = true;
 		}
@@ -539,7 +510,7 @@ void sinsp::open_savefile(const std::string& filename, int fd)
 {
 #ifdef HAS_ENGINE_SAVEFILE
 	scap_open_args oargs {};
-	struct scap_savefile_engine_params params;
+	scap_savefile_engine_params params;
 
 	m_input_filename = filename;
 	m_input_fd = fd; /* default is 0. */
@@ -573,7 +544,7 @@ void sinsp::open_savefile(const std::string& filename, int fd)
 	params.fbuffer_size = 0;
 	oargs.engine_params = &params;
 
-	struct scap_platform* platform = scap_savefile_alloc_platform(::on_new_entry_from_proc, this);
+	scap_platform* platform = scap_savefile_alloc_platform(::on_new_entry_from_proc, this);
 	params.platform = platform;
 	open_common(&oargs, &scap_savefile_engine, platform, SINSP_MODE_CAPTURE);
 #else
@@ -585,13 +556,13 @@ void sinsp::open_plugin(const std::string& plugin_name, const std::string& plugi
 {
 #ifdef HAS_ENGINE_SOURCE_PLUGIN
 	scap_open_args oargs {};
-	struct scap_source_plugin_engine_params params;
+	scap_source_plugin_engine_params params;
 	set_input_plugin(plugin_name, plugin_open_params);
 	params.input_plugin = &m_input_plugin->as_scap_source();
 	params.input_plugin_params = (char*)m_input_plugin_open_params.c_str();
 	oargs.engine_params = &params;
 
-	struct scap_platform* platform;
+	scap_platform* platform;
 	switch(mode)
 	{
 		case SINSP_MODE_PLUGIN:
@@ -618,17 +589,17 @@ void sinsp::open_gvisor(const std::string& config_path, const std::string& root_
 	}
 
 	scap_open_args oargs {};
-	struct scap_gvisor_engine_params params;
+	scap_gvisor_engine_params params;
 	params.gvisor_root_path = root_path.c_str();
 	params.gvisor_config_path = config_path.c_str();
 	params.no_events = no_events;
 	params.gvisor_epoll_timeout = epoll_timeout;
 
-	struct scap_platform* platform = scap_gvisor_alloc_platform(::on_new_entry_from_proc, this);
+	scap_platform* platform = scap_gvisor_alloc_platform(::on_new_entry_from_proc, this);
 	params.gvisor_platform = reinterpret_cast<scap_gvisor_platform*>(platform);
 
 	oargs.engine_params = &params;
-	
+
 	open_common(&oargs, &scap_gvisor_engine, platform, SINSP_MODE_LIVE);
 
 	set_get_procs_cpu_from_driver(false);
@@ -646,13 +617,13 @@ void sinsp::open_modern_bpf(unsigned long driver_buffer_bytes_dim, uint16_t cpus
 	fill_ppm_sc_of_interest(&oargs, ppm_sc_of_interest);
 
 	/* Engine-specific args. */
-	struct scap_modern_bpf_engine_params params;
+	scap_modern_bpf_engine_params params;
 	params.buffer_bytes_dim = driver_buffer_bytes_dim;
 	params.cpus_for_each_buffer = cpus_for_each_buffer;
 	params.allocate_online_only = online_only;
 	oargs.engine_params = &params;
 
-	struct scap_platform* platform = scap_linux_alloc_platform(::on_new_entry_from_proc, this);
+	scap_platform* platform = scap_linux_alloc_platform(::on_new_entry_from_proc, this);
 	open_common(&oargs, &scap_modern_bpf_engine, platform, SINSP_MODE_LIVE);
 #else
 	throw sinsp_exception("MODERN_BPF engine is not supported in this build");
@@ -663,11 +634,11 @@ void sinsp::open_test_input(scap_test_input_data* data, sinsp_mode_t mode)
 {
 #ifdef HAS_ENGINE_TEST_INPUT
 	scap_open_args oargs {};
-	struct scap_test_input_engine_params params;
+	scap_test_input_engine_params params;
 	params.test_input_data = data;
 	oargs.engine_params = &params;
 
-	struct scap_platform* platform;
+	scap_platform* platform;
 	switch(mode)
 	{
 	case SINSP_MODE_TEST:
@@ -691,7 +662,7 @@ void sinsp::open_test_input(scap_test_input_data* data, sinsp_mode_t mode)
 
 /*=============================== Engine related ===============================*/
 
-bool sinsp::check_current_engine(const std::string& engine_name)
+bool sinsp::check_current_engine(const std::string& engine_name) const
 {
 	return scap_check_current_engine(m_h, engine_name.data());
 }
@@ -749,7 +720,7 @@ unsigned sinsp::num_possible_cpus()
 	return m_num_possible_cpus;
 }
 
-std::vector<long> sinsp::get_n_tracepoint_hit()
+std::vector<long> sinsp::get_n_tracepoint_hit() const
 {
 	std::vector<long> ret(num_possible_cpus(), 0);
 	if(scap_get_n_tracepoint_hit(m_h, ret.data()) != SCAP_SUCCESS)
@@ -802,11 +773,7 @@ void sinsp::close()
 
 	deinit_state();
 
-	if(m_filter != NULL)
-	{
-		delete m_filter;
-		m_filter = NULL;
-	}
+	m_filter.reset();
 
 	// unset the meta-event callback to all plugins that support it
 	if (!is_capture() && m_mode != SINSP_MODE_NONE)
@@ -879,29 +846,23 @@ void sinsp::on_new_entry_from_proc(void* context,
 	{
 		ASSERT(tinfo != NULL);
 
-		bool thread_added = false;
-		sinsp_threadinfo* newti = build_threadinfo();
+		threadinfo_map_t::ptr_t sinsp_tinfo;
+		auto newti = build_threadinfo();
 		newti->init(tinfo);
 		if(is_nodriver())
 		{
-			auto sinsp_tinfo = find_thread(tid, true);
-			if(sinsp_tinfo == nullptr || newti->m_clone_ts > sinsp_tinfo->m_clone_ts)
+			auto existing_tinfo = find_thread(tid, true);
+			if(existing_tinfo == nullptr || newti->m_clone_ts > existing_tinfo->m_clone_ts)
 			{
-				thread_added = m_thread_manager->add_thread(newti, true);
+				sinsp_tinfo = m_thread_manager->add_thread(std::move(newti), true);
 			}
 		}
 		else
 		{
-			thread_added = m_thread_manager->add_thread(newti, true);
+			sinsp_tinfo = m_thread_manager->add_thread(std::move(newti), true);
 		}
-		if (!thread_added)
+		if (sinsp_tinfo)
 		{
-			delete newti;
-		}
-		else
-		{
-			auto sinsp_tinfo = find_thread(tid, true);
-
 			// in case the inspector is configured with an internal filter,
 			// we filter out thread infos in case we determine them not passing
 			// the given filter. Filtered out thread infos will not be dumped
@@ -939,15 +900,16 @@ void sinsp::on_new_entry_from_proc(void* context,
 				tscapevt.len = sizeof(scap_evt);
 
 				sinsp_evt tevt = {};
-				tevt.m_pevt = &tscapevt;
-				tevt.m_info = &(g_infotables.m_event_info[PPME_SCAPEVENT_X]);
-				tevt.m_cpuid = 0;
-				tevt.m_evtnum = 0;
-				tevt.m_inspector = this;
-				tevt.m_tinfo = sinsp_tinfo.get();
-				tevt.m_fdinfo = NULL;
+				tevt.set_scap_evt(&tscapevt);
+				tevt.set_info(&(g_infotables.m_event_info[PPME_SCAPEVENT_X]));
+				tevt.set_cpuid(0);
+				tevt.set_num(0);
+				tevt.set_inspector(this);
+				tevt.set_tinfo(sinsp_tinfo.get());
+				tevt.set_fdinfo_ref(nullptr);
+				tevt.set_fd_info(NULL);
 				sinsp_tinfo->m_lastevent_fd = -1;
-				sinsp_tinfo->m_lastevent_data = NULL;
+				sinsp_tinfo->set_last_event_data(NULL);
 
 				sinsp_tinfo->m_filtered_out = !m_filter->run(&tevt);
 			}
@@ -964,24 +926,17 @@ void sinsp::on_new_entry_from_proc(void* context,
 		{
 			ASSERT(tinfo != NULL);
 
-			sinsp_threadinfo* newti = build_threadinfo();
+			auto newti = build_threadinfo();
 			newti->init(tinfo);
 
-			if (!m_thread_manager->add_thread(newti, true)) {
-				ASSERT(false);
-				delete newti;
-				return;
-			}
-
-			sinsp_tinfo = find_thread(tid, true);
-			if (!sinsp_tinfo) {
+			sinsp_tinfo = m_thread_manager->add_thread(std::move(newti), true);
+			if (sinsp_tinfo == nullptr) {
 				ASSERT(false);
 				return;
 			}
 		}
 
-		sinsp_fdinfo_t sinsp_fdinfo;
-		sinsp_tinfo->add_fd_from_scap(fdinfo, &sinsp_fdinfo);
+		sinsp_tinfo->add_fd_from_scap(fdinfo);
 	}
 }
 
@@ -1005,7 +960,7 @@ void sinsp::import_ifaddr_list()
 	m_network_interfaces.import_interfaces(scap_get_ifaddr_list(get_scap_platform()));
 }
 
-const sinsp_network_interfaces& sinsp::get_ifaddr_list()
+const sinsp_network_interfaces& sinsp::get_ifaddr_list() const
 {
 	return m_network_interfaces;
 }
@@ -1036,7 +991,7 @@ void sinsp::import_user_list()
 
 void sinsp::refresh_ifaddr_list()
 {
-#if defined(HAS_CAPTURE) && !defined(_WIN32)
+#if !defined(_WIN32)
 	if(is_live() || is_syscall_plugin())
 	{
 		scap_refresh_iflist(get_scap_platform());
@@ -1044,8 +999,6 @@ void sinsp::refresh_ifaddr_list()
 	}
 #endif
 }
-
-bool should_drop(sinsp_evt *evt, bool* stopped, bool* switched);
 
 //
 // This restarts the current event capture. This de-initializes and
@@ -1077,7 +1030,7 @@ void sinsp::restart_capture()
 	m_nevts = nevts;
 }
 
-uint64_t sinsp::max_buf_used()
+uint64_t sinsp::max_buf_used() const
 {
 	if(m_h)
 	{
@@ -1130,20 +1083,18 @@ void sinsp::get_procs_cpu_from_driver(uint64_t ts)
 			continue;
 		}
 
-		// create scap event
 		uint32_t evlen = sizeof(scap_evt) + 2 * sizeof(uint16_t) + 2 * sizeof(uint64_t);
 		auto piscapevt_buf = std::unique_ptr<uint8_t, std::default_delete<uint8_t[]>>(new uint8_t[evlen]);
-		uint16_t* evt_lens = (uint16_t*) (piscapevt_buf.get() + sizeof(struct ppm_evt_hdr));
 		auto piscapevt = (scap_evt*) piscapevt_buf.get();
-		piscapevt->len = evlen;
-		piscapevt->type = PPME_PROCINFO_E;
-		piscapevt->nparams = 2;
 		piscapevt->tid = pi->pid;
 		piscapevt->ts = ts;
-		evt_lens[0] = 8; // cpu_usr (len)
-		evt_lens[1] = 8; // cpu_sys (len)
-		((uint64_t*)(evt_lens + 2))[0] = pi->utime; // cpu_usr (val)
-		((uint64_t*)(evt_lens + 2))[1] = pi->stime; // cpu_sys (val)
+		int32_t encode_res = scap_event_encode_params(scap_sized_buffer{piscapevt_buf.get(), evlen}, nullptr, error,
+			PPME_PROCINFO_E, 2, pi->utime, pi->stime);
+
+		if (encode_res != SCAP_SUCCESS)
+		{
+			throw sinsp_exception(std::string("could not encode PPME_PROCINFO_E event: ") + error);
+		}
 
 		// push event into async event queue
 		handle_async_event(sinsp_evt::from_scap_evt(std::move(piscapevt_buf)));
@@ -1157,9 +1108,9 @@ int32_t sinsp::fetch_next_event(sinsp_evt*& evt)
 	// after the initial "machine state" section
 	if (m_replay_scap_evt != NULL)
 	{
-		evt->m_pevt = m_replay_scap_evt;
-		evt->m_cpuid = m_replay_scap_cpuid;
-		evt->m_dump_flags = m_replay_scap_flags;
+		evt->set_scap_evt(m_replay_scap_evt);
+		evt->set_cpuid(m_replay_scap_cpuid);
+		evt->set_dump_flags(m_replay_scap_flags);
 		m_replay_scap_evt = NULL;
 		return SCAP_SUCCESS;
 	}
@@ -1181,9 +1132,9 @@ int32_t sinsp::fetch_next_event(sinsp_evt*& evt)
 		!m_async_events_queue.empty() && m_async_events_queue.try_pop(m_async_evt))
 	{
 		evt = m_async_evt.get();
-		if(evt->m_pevt->ts == (uint64_t) -1)
+		if(evt->get_scap_evt()->ts == (uint64_t) -1)
 		{
-			evt->m_pevt->ts = get_new_ts();
+			evt->get_scap_evt()->ts = get_new_ts();
 		}
 		return SCAP_SUCCESS;
 	}
@@ -1203,9 +1154,9 @@ int32_t sinsp::fetch_next_event(sinsp_evt*& evt)
 			{
 				// the async event is the one with most priority
 				evt = m_async_evt.get();
-				if(evt->m_pevt->ts == (uint64_t) -1)
+				if(evt->get_scap_evt()->ts == (uint64_t) -1)
 				{
-					evt->m_pevt->ts = get_new_ts();
+					evt->get_scap_evt()->ts = get_new_ts();
 				}
 				return SCAP_SUCCESS;
 			}
@@ -1223,14 +1174,14 @@ int32_t sinsp::next(OUT sinsp_evt **puevt)
 	*puevt = NULL;
 	sinsp_evt* evt = &m_evt;
 
-	// fetch the next event 
+	// fetch the next event
 	int32_t res = fetch_next_event(evt);
 
 	// if we fetched an event successfully, check if we need to suppress
 	// it from userspace and update the result status
 	if (res == SCAP_SUCCESS)
 	{
-		res = m_suppress.process_event(evt->m_pevt, evt->m_cpuid);
+		res = m_suppress.process_event(evt->get_scap_evt(), evt->get_cpuid());
 	}
 
 	// in case we don't succeed, handle each scenario and return
@@ -1304,10 +1255,10 @@ int32_t sinsp::next(OUT sinsp_evt **puevt)
 	// state management.
 	//
 	m_nevts++;
-	evt->m_evtnum = m_nevts;
+	evt->set_num(m_nevts);
 	m_lastevent_ts = ts;
 
-	if(m_automatic_threadtable_purging)
+	if (m_auto_threads_purging)
 	{
 		//
 		// Delayed removal of threads from the thread table, so that
@@ -1325,9 +1276,7 @@ int32_t sinsp::next(OUT sinsp_evt **puevt)
 		}
 	}
 
-#ifndef HAS_ANALYZER
-
-	if(is_debug_enabled() && is_live())
+	if (m_auto_stats_print && is_debug_enabled() && is_live())
 	{
 		if(ts > m_next_stats_print_time_ns)
 		{
@@ -1340,27 +1289,24 @@ int32_t sinsp::next(OUT sinsp_evt **puevt)
 		}
 	}
 
-	//
-	// Run the periodic connection, thread and users/groups table cleanup
-	//
-	if(!is_offline())
+	if (m_auto_containers_purging && !is_offline())
 	{
 		m_container_manager.remove_inactive_containers();
-
-#if !defined(CYGWING_AGENT) && !defined(MINIMAL_BUILD) && !defined(__EMSCRIPTEN__)
-		m_usergroup_manager.clear_host_users_groups();
-#endif // !defined(CYGWING_AGENT) && !defined(MINIMAL_BUILD)
 	}
-#endif // HAS_ANALYZER
+
+	if (m_auto_usergroups_purging && !is_offline())
+	{
+		m_usergroup_manager.clear_host_users_groups();
+	}
 
 	//
 	// Delayed removal of the fd, so that
 	// things like exit() or close() can be parsed.
 	//
-	uint32_t nfdr = (uint32_t)m_fds_to_remove->size();
+	uint32_t nfdr = (uint32_t)m_fds_to_remove.size();
 	if(nfdr != 0)
 	{
-		/* This is a removal logic we shouldn't scan /proc. If we don't have the thread 
+		/* This is a removal logic we shouldn't scan /proc. If we don't have the thread
 		 * to remove we are fine.
 		 */
 		sinsp_threadinfo* ptinfo = get_thread_ref(m_tid_of_fd_to_remove, false).get();
@@ -1368,41 +1314,16 @@ int32_t sinsp::next(OUT sinsp_evt **puevt)
 		{
 			for(uint32_t j = 0; j < nfdr; j++)
 			{
-				ptinfo->remove_fd(m_fds_to_remove->at(j));
+				ptinfo->remove_fd(m_fds_to_remove.at(j));
 			}
 		}
-		m_fds_to_remove->clear();
+		m_fds_to_remove.clear();
 	}
-
-#ifdef SIMULATE_DROP_MODE
-	bool sd = false;
-	bool sw = false;
-
-	if(m_analyzer)
-	{
-		m_analyzer->m_configuration->set_analyzer_sample_len_ns(500000000);
-	}
-
-	sd = should_drop(evt, &m_isdropping, &sw);
-#endif
 
 	//
 	// Run the state engine
 	//
-#ifdef SIMULATE_DROP_MODE
-	if(!sd || m_isdropping)
-	{
-		m_parser->process_event(evt);
-	}
-
-	if(sd && !m_isdropping)
-	{
-		*evt = NULL;
-		return SCAP_TIMEOUT;
-	}
-#else
 	m_parser->process_event(evt);
-#endif
 
 	// run plugin-implemented parsers
 	// note: we run the parsers even if the event has been filtered out,
@@ -1419,7 +1340,7 @@ int32_t sinsp::next(OUT sinsp_evt **puevt)
 	// Finally set output evt;
 	// From now on, any return must have the correct output being set.
 	*puevt = evt;
-	if(evt->m_filtered_out)
+	if(evt->is_filtered_out())
 	{
 		ppm_event_category cat = evt->get_category();
 
@@ -1445,12 +1366,12 @@ int32_t sinsp::next(OUT sinsp_evt **puevt)
 	//
 	// Update the last event time for this thread
 	//
-	if(evt->m_tinfo &&
+	if(evt->get_tinfo() &&
 		evt->get_type() != PPME_SCHEDSWITCH_1_E &&
 		evt->get_type() != PPME_SCHEDSWITCH_6_E)
 	{
-		evt->m_tinfo->m_prevevent_ts = evt->m_tinfo->m_lastevent_ts;
-		evt->m_tinfo->m_lastevent_ts = m_lastevent_ts;
+		evt->get_tinfo()->m_prevevent_ts = evt->get_tinfo()->m_lastevent_ts;
+		evt->get_tinfo()->m_lastevent_ts = m_lastevent_ts;
 	}
 
 	//
@@ -1459,7 +1380,7 @@ int32_t sinsp::next(OUT sinsp_evt **puevt)
 	return res;
 }
 
-uint64_t sinsp::get_num_events()
+uint64_t sinsp::get_num_events() const
 {
 	if(m_h)
 	{
@@ -1471,20 +1392,14 @@ uint64_t sinsp::get_num_events()
 	}
 }
 
-sinsp_threadinfo* sinsp::find_thread_test(int64_t tid, bool lookup_only)
-{
-	// TODO: we pay the refcount manipulation price here
-	return &*find_thread(tid, lookup_only);
-}
-
 threadinfo_map_t::ptr_t sinsp::get_thread_ref(int64_t tid, bool query_os_if_not_found, bool lookup_only, bool main_thread)
 {
 	return m_thread_manager->get_thread_ref(tid, query_os_if_not_found, lookup_only, main_thread);
 }
 
-bool sinsp::add_thread(const sinsp_threadinfo *ptinfo)
+std::shared_ptr<sinsp_threadinfo> sinsp::add_thread(std::unique_ptr<sinsp_threadinfo> ptinfo)
 {
-	return m_thread_manager->add_thread((sinsp_threadinfo*)ptinfo, false);
+	return m_thread_manager->add_thread(std::move(ptinfo), false);
 }
 
 void sinsp::remove_thread(int64_t tid)
@@ -1504,7 +1419,7 @@ bool sinsp::suppress_events_tid(int64_t tid)
 	return true;
 }
 
-bool sinsp::check_suppressed(int64_t tid)
+bool sinsp::check_suppressed(int64_t tid) const
 {
 	return m_suppress.is_suppressed_tid(tid, UINT16_MAX);
 }
@@ -1697,12 +1612,15 @@ void sinsp::stop_capture()
 	}
 
 	/* Print scap stats */
-	print_capture_stats(sinsp_logger::SEV_DEBUG);
+	if (m_auto_stats_print)
+	{
+		print_capture_stats(sinsp_logger::SEV_DEBUG);
+	}
 
 	/* Print the number of threads and fds in our tables */
 	uint64_t thread_cnt = 0;
 	uint64_t fd_cnt = 0;
-	m_thread_manager->m_threadtable.loop([&thread_cnt, &fd_cnt] (sinsp_threadinfo& tinfo) {
+	m_thread_manager->get_threads()->loop([&thread_cnt, &fd_cnt] (sinsp_threadinfo& tinfo) {
 		thread_cnt++;
 
 		/* Only main threads have an associated fdtable */
@@ -1721,7 +1639,7 @@ void sinsp::stop_capture()
 		", total fds in all threads:%" PRIu64
 		"\n",
 		thread_cnt,
-		fd_cnt); 
+		fd_cnt);
 }
 
 void sinsp::start_capture()
@@ -1760,7 +1678,7 @@ void sinsp::start_dropping_mode(uint32_t sampling_ratio)
 }
 #endif // _WIN32
 
-void sinsp::set_filter(sinsp_filter* filter)
+void sinsp::set_filter(std::unique_ptr<sinsp_filter> filter)
 {
 	if(m_filter != NULL)
 	{
@@ -1768,7 +1686,7 @@ void sinsp::set_filter(sinsp_filter* filter)
 		throw sinsp_exception("filter can only be set once");
 	}
 
-	m_filter = filter;
+	m_filter = std::move(filter);
 }
 
 void sinsp::set_filter(const std::string& filter)
@@ -1785,7 +1703,7 @@ void sinsp::set_filter(const std::string& filter)
 	m_internal_flt_ast = compiler.get_filter_ast();
 }
 
-const std::string sinsp::get_filter()
+std::string sinsp::get_filter() const
 {
 	return m_filterstring;
 }
@@ -1808,12 +1726,12 @@ bool sinsp::run_filters_on_evt(sinsp_evt *evt)
 	return false;
 }
 
-const scap_machine_info* sinsp::get_machine_info()
+const scap_machine_info* sinsp::get_machine_info() const
 {
 	return m_machine_info;
 }
 
-const scap_agent_info* sinsp::get_agent_info()
+const scap_agent_info* sinsp::get_agent_info() const
 {
 	return m_agent_info;
 }
@@ -1823,14 +1741,24 @@ scap_stats_v2* sinsp::get_sinsp_stats_v2_buffer()
 	return m_sinsp_stats_v2_buffer;
 }
 
+const scap_stats_v2* sinsp::get_sinsp_stats_v2_buffer() const
+{
+	return m_sinsp_stats_v2_buffer;
+}
+
 std::shared_ptr<sinsp_stats_v2> sinsp::get_sinsp_stats_v2()
 {
 	return m_sinsp_stats_v2;
 }
 
-sinsp_filter_check* sinsp::new_generic_filtercheck()
+std::shared_ptr<const sinsp_stats_v2> sinsp::get_sinsp_stats_v2() const
 {
-	return new sinsp_filter_check_gen_event();
+	return m_sinsp_stats_v2;
+}
+
+std::unique_ptr<sinsp_filter_check> sinsp::new_generic_filtercheck()
+{
+	return std::make_unique<sinsp_filter_check_gen_event>();
 }
 
 void sinsp::get_capture_stats(scap_stats* stats) const
@@ -1890,10 +1818,10 @@ void sinsp::print_capture_stats(sinsp_logger::severity sev) const
 		stats.n_drops_bug);
 }
 
-const struct scap_stats_v2* sinsp::get_capture_stats_v2(uint32_t flags, uint32_t* nstats, int32_t* rc) const
+const scap_stats_v2* sinsp::get_capture_stats_v2(uint32_t flags, uint32_t* nstats, int32_t* rc) const
 {
 	/* On purpose ignoring failures to not interrupt in case of stats retrieval failure. */
-	const struct scap_stats_v2* stats_v2 = scap_get_stats_v2(m_h, flags, nstats, rc);
+	const scap_stats_v2* stats_v2 = scap_get_stats_v2(m_h, flags, nstats, rc);
 	if (!stats_v2)
 	{
 		*nstats = 0;
@@ -1939,7 +1867,7 @@ void sinsp::set_buffer_format(sinsp_evt::param_fmt format)
 	m_buffer_format = format;
 }
 
-sinsp_evt::param_fmt sinsp::get_buffer_format()
+sinsp_evt::param_fmt sinsp::get_buffer_format() const
 {
 	return m_buffer_format;
 }
@@ -1979,12 +1907,7 @@ void sinsp::set_max_evt_output_len(uint32_t len)
 	m_max_evt_output_len = len;
 }
 
-sinsp_parser* sinsp::get_parser()
-{
-	return m_parser;
-}
-
-double sinsp::get_read_progress_file()
+double sinsp::get_read_progress_file() const
 {
 	if(m_input_fd != 0)
 	{
@@ -2010,7 +1933,7 @@ double sinsp::get_read_progress_file()
 	return (double)fpos * 100 / m_filesize;
 }
 
-void sinsp::get_read_progress_plugin(OUT double* nres, std::string* sres)
+void sinsp::get_read_progress_plugin(OUT double* nres, std::string* sres) const
 {
 	ASSERT(nres != NULL);
 	ASSERT(sres != NULL);
@@ -2033,7 +1956,7 @@ void sinsp::get_read_progress_plugin(OUT double* nres, std::string* sres)
 	*nres = ((double)nplg) / 100;
 }
 
-double sinsp::get_read_progress()
+double sinsp::get_read_progress() const
 {
 	if(is_plugin())
 	{
@@ -2047,7 +1970,7 @@ double sinsp::get_read_progress()
 	}
 }
 
-double sinsp::get_read_progress_with_str(OUT std::string* progress_str)
+double sinsp::get_read_progress_with_str(OUT std::string* progress_str) const
 {
 	if(is_plugin())
 	{
@@ -2065,16 +1988,6 @@ double sinsp::get_read_progress_with_str(OUT std::string* progress_str)
 bool sinsp::remove_inactive_threads()
 {
 	return m_thread_manager->remove_inactive_threads();
-}
-
-void sinsp::disable_automatic_threadtable_purging()
-{
-	m_automatic_threadtable_purging = false;
-}
-
-void sinsp::set_thread_purge_interval_s(uint32_t val)
-{
-	m_inactive_thread_scan_time_ns = (uint64_t)val * ONE_SECOND_IN_NS;
 }
 
 void sinsp::set_thread_timeout_s(uint32_t val)
@@ -2130,24 +2043,24 @@ bool sinsp_thread_manager::remove_inactive_threads()
 		// Set the first table scan for 30 seconds in, so that we can spot bugs in the logic without having
 		// to wait for tens of minutes
 		//
-		if(m_inspector->m_inactive_thread_scan_time_ns > 30 * ONE_SECOND_IN_NS)
+		if(m_inspector->m_threads_purging_scan_time_ns > 30 * ONE_SECOND_IN_NS)
 		{
 			m_last_flush_time_ns =
-				(m_inspector->m_lastevent_ts - m_inspector->m_inactive_thread_scan_time_ns + 30 * ONE_SECOND_IN_NS);
+				(m_inspector->get_lastevent_ts() - m_inspector->m_threads_purging_scan_time_ns + 30 * ONE_SECOND_IN_NS);
 		}
 		else
 		{
 			m_last_flush_time_ns =
-				(m_inspector->m_lastevent_ts - m_inspector->m_inactive_thread_scan_time_ns);
+				(m_inspector->get_lastevent_ts() - m_inspector->m_threads_purging_scan_time_ns);
 		}
 	}
 
-	if(m_inspector->m_lastevent_ts >
-		m_last_flush_time_ns + m_inspector->m_inactive_thread_scan_time_ns)
+	if(m_inspector->get_lastevent_ts() >
+		m_last_flush_time_ns + m_inspector->m_threads_purging_scan_time_ns)
 	{
 		std::unordered_set<int64_t> to_delete;
 
-		m_last_flush_time_ns = m_inspector->m_lastevent_ts;
+		m_last_flush_time_ns = m_inspector->get_lastevent_ts();
 
 		libsinsp_logger()->format(sinsp_logger::SEV_INFO, "Flushing thread table");
 
@@ -2157,7 +2070,7 @@ bool sinsp_thread_manager::remove_inactive_threads()
 		 */
 		m_threadtable.loop([&] (sinsp_threadinfo& tinfo) {
 			if(tinfo.is_invalid() ||
-				((m_inspector->m_lastevent_ts > tinfo.m_lastaccess_ts + m_inspector->m_thread_timeout_ns) &&
+				((m_inspector->get_lastevent_ts() > tinfo.m_lastaccess_ts + m_inspector->m_thread_timeout_ns) &&
 					!scap_is_thread_alive(m_inspector->get_scap_platform(), tinfo.m_pid, tinfo.m_tid, tinfo.m_comm.c_str())))
 			{
 				to_delete.insert(tinfo.m_tid);
@@ -2178,19 +2091,25 @@ bool sinsp_thread_manager::remove_inactive_threads()
 	return false;
 }
 
-sinsp_threadinfo*
+std::unique_ptr<sinsp_threadinfo>
 libsinsp::event_processor::build_threadinfo(sinsp* inspector)
 {
-	return new sinsp_threadinfo(inspector);
+	return std::make_unique<sinsp_threadinfo>(inspector);
+}
+
+std::unique_ptr<sinsp_fdinfo>
+libsinsp::event_processor::build_fdinfo(sinsp* inspector)
+{
+	return std::make_unique<sinsp_fdinfo>();
 }
 
 void sinsp::handle_async_event(std::unique_ptr<sinsp_evt> evt)
 {
 	// see comments in handle_plugin_async_event
 	ASSERT(!is_capture());
-	evt->inspector(this);
-	if(evt->m_pevt->ts != (uint64_t)-1 &&
-		evt->m_pevt->ts > sinsp_utils::get_current_time_ns() + ONE_SECOND_IN_NS * 10)
+	evt->set_inspector(this);
+	if(evt->get_scap_evt()->ts != (uint64_t)-1 &&
+		evt->get_scap_evt()->ts > sinsp_utils::get_current_time_ns() + ONE_SECOND_IN_NS * 10)
 	{
 		libsinsp_logger()->log("async event ts too far in future", sinsp_logger::SEV_WARNING);
 		return;
@@ -2230,11 +2149,11 @@ void sinsp::handle_plugin_async_event(const sinsp_plugin& p, std::unique_ptr<sin
 		// todo(jasondellaluce): here we are assuming that the "syscall" event
 		// source is always at index 0 in the inspector's event source list,
 		// change this code if this assumption ever stops being true.
-		
+
 		// default: syscall source
 		size_t cur_evtsrc_idx = 0;
 		uint32_t cur_plugin_id = 0;
-		
+
 		// If we have a source plugin, we search for its event source and we update the current event source.
 		// Otherwise the current event source remains the syscall one.
 		if (is_plugin())
@@ -2261,20 +2180,20 @@ void sinsp::handle_plugin_async_event(const sinsp_plugin& p, std::unique_ptr<sin
 
 		// if the async event is generated by a non-syscall event source, then
 		// async events must have no thread associated.
-		if (cur_plugin_id != 0 && evt->m_pevt->tid != (uint64_t) -1)
+		if (cur_plugin_id != 0 && evt->get_scap_evt()->tid != (uint64_t) -1)
 		{
 			throw sinsp_exception("async events of plugin '" + p.name()
 				+ "' can have no thread associated with open event source '" + cur_evtsrc + "'");
 		}
 
 		// write plugin ID and timestamp in the event and kick it in the queue
-		auto plid = (uint32_t*)((uint8_t*) evt->m_pevt + sizeof(scap_evt) + 4+4+4);
-		*plid = cur_plugin_id;
+		auto plid = (uint32_t*)((uint8_t*) evt->get_scap_evt() + sizeof(scap_evt) + 4+4+4);
+		memcpy(plid, &cur_plugin_id, sizeof(cur_plugin_id));
 		handle_async_event(std::move(evt));
 	}
 }
 
-bool sinsp::get_track_connection_status()
+bool sinsp::get_track_connection_status() const
 {
 	return m_parser->get_track_connection_status();
 }
@@ -2284,7 +2203,7 @@ void sinsp::set_track_connection_status(bool enabled)
 	m_parser->set_track_connection_status(enabled);
 }
 
-uint64_t sinsp::get_new_ts()
+uint64_t sinsp::get_new_ts() const
 {
 	// m_lastevent_ts = 0 at startup when containers are
 	// being created as a part of the initial process
@@ -2294,7 +2213,3 @@ uint64_t sinsp::get_new_ts()
 			: m_lastevent_ts;
 }
 
-struct scap_platform* sinsp::get_scap_platform()
-{
-	return m_platform;
-}

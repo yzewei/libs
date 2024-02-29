@@ -27,12 +27,9 @@ include(zlib)
 
 if(WIN32)
 	set(CMAKE_CXX_FLAGS "-D_CRT_SECURE_NO_WARNINGS -DWIN32 -DMINIMAL_BUILD /EHsc /W3 /Zi /std:c++17")
-	set(CMAKE_CXX_FLAGS_DEBUG "/MTd /Od")
+	set(CMAKE_CXX_FLAGS_DEBUG ${FALCOSECURITY_LIBS_DEBUG_FLAGS})
 	set(CMAKE_CXX_STANDARD 17)
 endif()
-
-# We need `${CMAKE_BINARY_DIR}/libsinsp` to include `cri...pb.h` files for container tests
-include_directories(${LIBSCAP_DIR}/driver ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_BINARY_DIR}/libsinsp)
 
 # Create a libsinsp_test_var.h file with some variables used by our tests
 configure_file (
@@ -86,6 +83,7 @@ file(GLOB_RECURSE TEST_HELPERS ${CMAKE_CURRENT_SOURCE_DIR}/helpers/*.cpp)
 
 set(LIBSINSP_UNIT_TESTS_SOURCES
 	test_utils.cpp
+	sinsp_with_test_input.cpp
 	cgroup_list_counter.ut.cpp
 	events_evt.ut.cpp
 	events_file.ut.cpp
@@ -118,6 +116,7 @@ set(LIBSINSP_UNIT_TESTS_SOURCES
 	savefile.ut.cpp
 	sinsp_stats.ut.cpp
 	thread_table.ut.cpp
+	ifinfo.ut.cpp
 	public_sinsp_API/event_related.cpp
 	public_sinsp_API/sinsp_logger.cpp
 	"${TEST_PLUGINS}"
@@ -145,8 +144,6 @@ elseif(APPLE OR EMSCRIPTEN)
 		events_net.ut.cpp
 	)
 endif()
-
-add_definitions(-DVISIBILITY_PRIVATE=)
 
 if(NOT MINIMAL_BUILD)
 	list(APPEND LIBSINSP_UNIT_TESTS_SOURCES procfs_utils.ut.cpp)
@@ -180,11 +177,19 @@ if (EMSCRIPTEN)
 	target_link_options(unit-test-libsinsp PRIVATE "-sNODERAWFS=1")
 endif()
 
+target_include_directories(unit-test-libsinsp
+	PRIVATE
+	${LIBS_DIR} # needed for driver/event_stats.h
+	${CMAKE_CURRENT_BINARY_DIR} # needed for libsinsp_test_var.h.in
+	${CMAKE_CURRENT_SOURCE_DIR}
+)
+
 target_link_libraries(unit-test-libsinsp
 	sinsp
 	"${GTEST_LIB}"
 	"${GTEST_MAIN_LIB}"
 	"${TBB_LIB}"
+	"${JSONCPP_LIB}"
 )
 
 if (CMAKE_BUILD_TYPE STREQUAL "Coverage")

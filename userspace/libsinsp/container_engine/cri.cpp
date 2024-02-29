@@ -16,7 +16,7 @@ limitations under the License.
 
 */
 
-#include "container_engine/cri.h"
+#include <libsinsp/container_engine/cri.h>
 
 #include <sys/stat.h>
 #ifdef GRPC_INCLUDE_IS_GRPCPP
@@ -25,14 +25,14 @@ limitations under the License.
 #	include <grpc++/grpc++.h>
 #endif
 
-#include "runc.h"
-#include "container_engine/mesos.h"
+#include <libsinsp/runc.h>
+#include <libsinsp/container_engine/mesos.h>
 
-#include "cri.hpp"
+#include <libsinsp/cri.hpp>
 
 #include <memory>
-#include "sinsp.h"
-#include "sinsp_int.h"
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
 
 using namespace std;
 using namespace libsinsp::cri;
@@ -186,13 +186,13 @@ bool cri::resolve(sinsp_threadinfo *tinfo, bool query_os_for_missing_info)
 				container_id.c_str(), container.m_mesos_task_id.c_str());
 	}
 
+	// note: query_os_for_missing_info is set to 'true' by default
 	if (query_os_for_missing_info)
 	{
 		libsinsp_logger()->format(sinsp_logger::SEV_DEBUG,
 				"cri (%s): Performing lookup",
 				container_id.c_str());
 
-		container.set_lookup_status(sinsp_container_lookup::state::SUCCESSFUL);
 		libsinsp::cgroup_limits::cgroup_limits_key key(
 			container.m_id,
 			tinfo->get_cgroup("cpu"),
@@ -243,7 +243,40 @@ bool cri::resolve(sinsp_threadinfo *tinfo, bool query_os_for_missing_info)
 			libsinsp_logger()->format(sinsp_logger::SEV_DEBUG,
 					"cri_async (%s): Starting synchronous lookup",
 					container_id.c_str());
+			// `lookup_sync` function directly invokes the container engine specific parser `parse`
 			done = m_async_source->lookup_sync(key, result);
+			// note: The container image is the most crucial field from a security incident response perspective. 
+			// We aim to raise the bar for successful container lookups. Conversely, pod sandboxes do not include  
+			// a container image in the API response.
+			if(!result.m_image.empty() || result.is_pod_sandbox())
+			{
+				/*
+				* Only for synchronous lookup option (e.g. Falco's default is async not sync)
+				*
+				* Explicitly check for the most crucial retrieved value (`m_image`) to be present before enabling the 
+				* fast-track container add option. At this point, the container with only the cgroup (container id) was 
+				* already added to the cache. Therefore, we can proceed to call `replace_container`.
+				* 
+				* Bypassing the round-trip process:
+				* `source_callback` -> `notify_new_container` ->
+				* `container_to_sinsp_event(container_to_json(container_info), ...)` ->
+				* `parse_container_json_evt` -> `m_inspector->m_container_manager.add_container()`
+				*
+				* In `parse_container_json_evt`, we still re-add the container to support native 'container' events
+				* and new container callbacks that may expect the container as JSON in the artificial sinsp evt.
+				* However, we can avoid delays by storing the container struct in the container cache now. 
+				* This is beneficial because syscall events do not explicitly require container events, instead, 
+				* they directly retrieve container details from the container cache. This new feature can mitigate 
+				* issues noted by adopters, such as the absence of container images in syscall events even when 
+				* disabling async lookups.
+				*/
+				result.set_lookup_status(sinsp_container_lookup::state::STARTED);
+				// note: The cache should not have SUCCESSFUL as lookup status at this point, else `parse_container_json_evt` would wrongly exit early.
+				cache->replace_container(std::make_shared<sinsp_container_info>(result));
+				// note: On the other hand `parse_container_json_evt` expects SUCCESSFUL as lookup state for the incoming container event /
+				// the not yet cached container, exactly how it was done within `lookup_sync`.
+				result.set_lookup_status(sinsp_container_lookup::state::SUCCESSFUL);
+			}
 		}
 
 		if (done)

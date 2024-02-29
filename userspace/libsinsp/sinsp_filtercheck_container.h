@@ -18,10 +18,8 @@ limitations under the License.
 
 #pragma once
 
-#include "sinsp.h"
-#include "sinsp_filtercheck.h"
-
-class sinsp_filter_check_reference;
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_filtercheck.h>
 
 class sinsp_filter_check_container : public sinsp_filter_check
 {
@@ -55,12 +53,15 @@ public:
 	};
 
 	sinsp_filter_check_container();
+	virtual ~sinsp_filter_check_container() = default;
 
-	sinsp_filter_check* allocate_new() override;
+	std::unique_ptr<sinsp_filter_check> allocate_new() override;
 	int32_t parse_field_name(const char* str, bool alloc_state, bool needed_for_filtering) override;
-	uint8_t* extract(sinsp_evt*, OUT uint32_t* len, bool sanitize_strings = true) override;
 
-	const std::string& get_argstr();
+	const std::string& get_argstr() const;
+
+protected:
+	uint8_t* extract(sinsp_evt*, OUT uint32_t* len, bool sanitize_strings = true) override;
 
 private:
 	int32_t extract_arg(const std::string& val, size_t basename);

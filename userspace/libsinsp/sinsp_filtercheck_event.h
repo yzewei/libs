@@ -18,8 +18,8 @@ limitations under the License.
 
 #pragma once
 
-#include "sinsp_filtercheck.h"
-#include "sinsp_filtercheck_reference.h"
+#include <libsinsp/sinsp_filtercheck.h>
+#include <libsinsp/sinsp_filtercheck_reference.h>
 
 class sinsp_filter_check_event : public sinsp_filter_check
 {
@@ -87,21 +87,30 @@ public:
 	};
 
 	sinsp_filter_check_event();
-	virtual ~sinsp_filter_check_event();
+	virtual ~sinsp_filter_check_event() = default;
 
-	sinsp_filter_check* allocate_new() override;
+	std::unique_ptr<sinsp_filter_check> allocate_new() override;
 	int32_t parse_field_name(const char* str, bool alloc_state, bool needed_for_filtering) override;
 	size_t parse_filter_value(const char* str, uint32_t len, uint8_t* storage, uint32_t storage_len) override;
-	const filtercheck_field_info* get_field_info() override;
-	uint8_t* extract(sinsp_evt*, OUT uint32_t* len, bool sanitize_strings = true) override;
-	Json::Value extract_as_js(sinsp_evt*, OUT uint32_t* len) override;
-	bool compare(sinsp_evt*) override;
+	const filtercheck_field_info* get_field_info() const override;
 
+protected:
+	Json::Value extract_as_js(sinsp_evt*, OUT uint32_t* len) override;
+	virtual uint8_t* extract(sinsp_evt*, OUT uint32_t* len, bool sanitize_strings = true) override;
+	virtual bool compare_nocache(sinsp_evt*) override;
+
+private:
 	void validate_filter_value(const char* str, uint32_t len);
+	int32_t extract_arg(std::string fldname, std::string val, OUT const struct ppm_param_info** parinfo);
+	int32_t extract_type(std::string fldname, std::string val, OUT const struct ppm_param_info** parinfo);
+	uint8_t* extract_error_count(sinsp_evt *evt, OUT uint32_t* len);
+	uint8_t *extract_abspath(sinsp_evt *evt, OUT uint32_t *len);
+	inline uint8_t* extract_buflen(sinsp_evt *evt, OUT uint32_t* len);
 
 	uint64_t m_u64val;
 	int64_t m_s64val;
 	uint64_t m_tsdelta;
+	uint16_t m_u16val;
 	uint32_t m_u32val;
 	std::string m_strstorage;
 	std::string m_argname;
@@ -115,17 +124,6 @@ public:
 	// TYPE_RESARG, that need to do on the fly type customization
 	//
 	filtercheck_field_info m_customfield;
-
-private:
-	int32_t extract_arg(std::string fldname, std::string val, OUT const struct ppm_param_info** parinfo);
-	int32_t extract_type(std::string fldname, std::string val, OUT const struct ppm_param_info** parinfo);
-	uint8_t* extract_error_count(sinsp_evt *evt, OUT uint32_t* len);
-	uint8_t *extract_abspath(sinsp_evt *evt, OUT uint32_t *len);
-	inline uint8_t* extract_buflen(sinsp_evt *evt, OUT uint32_t* len);
-
 	bool m_is_compare;
-	char* m_storage;
-	uint32_t m_storage_size;
-	const char* m_cargname;
-	sinsp_filter_check_reference* m_converter;
+	std::unique_ptr<sinsp_filter_check_reference> m_converter;
 };

@@ -16,13 +16,13 @@ limitations under the License.
 
 */
 
-#include "user.h"
-#include "event.h"
-#include "procfs_utils.h"
-#include "utils.h"
-#include "logger.h"
-#include "sinsp.h"
-#include "strl.h"
+#include <libsinsp/user.h>
+#include <libsinsp/event.h>
+#include <libsinsp/procfs_utils.h>
+#include <libsinsp/utils.h>
+#include <libsinsp/logger.h>
+#include <libsinsp/sinsp.h>
+#include <libscap/strl.h>
 #include <sys/types.h>
 
 #ifdef HAVE_PWD_H
@@ -123,7 +123,7 @@ sinsp_usergroup_manager::sinsp_usergroup_manager(sinsp* inspector)
 	, m_inspector(inspector)
 	, m_host_root(m_inspector->get_host_root())
 #if defined(__linux__) && (defined(HAVE_PWD_H) || defined(HAVE_GRP_H))
-	, m_ns_helper(new libsinsp::procfs_utils::ns_helper(m_host_root))
+	, m_ns_helper(std::make_unique<libsinsp::procfs_utils::ns_helper>(m_host_root))
 #else
 	, m_ns_helper(nullptr)
 #endif
@@ -132,13 +132,6 @@ sinsp_usergroup_manager::sinsp_usergroup_manager(sinsp* inspector)
 	strlcpy(m_fallback_user.homedir, "<NA>", sizeof(m_fallback_user.homedir));
 	strlcpy(m_fallback_user.shell, "<NA>", sizeof(m_fallback_user.shell));
 	strlcpy(m_fallback_grp.name, "<NA>", sizeof(m_fallback_grp.name));
-}
-
-sinsp_usergroup_manager::~sinsp_usergroup_manager()
-{
-#if defined(__linux__) && (defined(HAVE_PWD_H) || defined(HAVE_GRP_H))
-	delete m_ns_helper;
-#endif
 }
 // clang-format on
 
@@ -162,7 +155,7 @@ void sinsp_usergroup_manager::dump_users_groups(sinsp_dumper& dumper) {
 		for (const auto &user: usrlist) {
 			sinsp_evt evt;
 			if (user_to_sinsp_event(&user.second, &evt, container_id, PPME_USER_ADDED_E)) {
-				evt.m_pevt->ts = m_inspector->get_new_ts();
+				evt.get_scap_evt()->ts = m_inspector->get_new_ts();
 				dumper.dump(&evt);
 			}
 		}
@@ -174,7 +167,7 @@ void sinsp_usergroup_manager::dump_users_groups(sinsp_dumper& dumper) {
 		for (const auto &group: grplist) {
 			sinsp_evt evt;
 			if (group_to_sinsp_event(&group.second, &evt, container_id, PPME_GROUP_ADDED_E)) {
-				evt.m_pevt->ts = m_inspector->get_new_ts();
+				evt.get_scap_evt()->ts = m_inspector->get_new_ts();
 				dumper.dump(&evt);
 			}
 		}
@@ -220,15 +213,15 @@ bool sinsp_usergroup_manager::clear_host_users_groups()
 
 	if(m_last_flush_time_ns == 0)
 	{
-		m_last_flush_time_ns = m_inspector->m_lastevent_ts - m_inspector->m_deleted_users_groups_scan_time_ns + 60 * ONE_SECOND_IN_NS;
+		m_last_flush_time_ns = m_inspector->get_lastevent_ts() - m_inspector->m_usergroups_purging_scan_time_ns + 60 * ONE_SECOND_IN_NS;
 	}
 
-	if(m_inspector->m_lastevent_ts >
-	   m_last_flush_time_ns + m_inspector->m_deleted_users_groups_scan_time_ns)
+	if(m_inspector->get_lastevent_ts() >
+	   m_last_flush_time_ns + m_inspector->m_usergroups_purging_scan_time_ns)
 	{
 		res = true;
 
-		m_last_flush_time_ns = m_inspector->m_lastevent_ts;
+		m_last_flush_time_ns = m_inspector->get_lastevent_ts();
 
 		// Clear everything, so that new threadinfos incoming will update
 		// user and group informations
@@ -242,22 +235,18 @@ scap_userinfo *sinsp_usergroup_manager::userinfo_map_insert(
 	userinfo_map &map,
 	uint32_t uid,
 	uint32_t gid,
-	const char *name,
-	const char *home,
-	const char *shell)
+	std::string_view name,
+	std::string_view home,
+	std::string_view shell)
 {
-	ASSERT(name);
-	ASSERT(home);
-	ASSERT(shell);
-
 	auto &usr = map[uid];
 	usr.uid = uid;
 	usr.gid = gid;
 	// In case the node is configured to use NIS,
 	// some struct passwd* fields may be set to NULL.
-	strlcpy(usr.name, (name != nullptr) ? name : "<NA>", MAX_CREDENTIALS_STR_LEN);
-	strlcpy(usr.homedir, (home != nullptr) ? home : "<NA>", SCAP_MAX_PATH_SIZE);
-	strlcpy(usr.shell, (shell != nullptr) ? shell : "<NA>", SCAP_MAX_PATH_SIZE);
+	strlcpy(usr.name, (name.data() != nullptr) ? std::string(name).c_str() : "<NA>", MAX_CREDENTIALS_STR_LEN);
+	strlcpy(usr.homedir, (home.data() != nullptr) ? std::string(home).c_str() : "<NA>", SCAP_MAX_PATH_SIZE);
+	strlcpy(usr.shell, (shell.data() != nullptr) ? std::string(shell).c_str() : "<NA>", SCAP_MAX_PATH_SIZE);
 
 	return &usr;
 }
@@ -265,18 +254,16 @@ scap_userinfo *sinsp_usergroup_manager::userinfo_map_insert(
 scap_groupinfo *sinsp_usergroup_manager::groupinfo_map_insert(
 	groupinfo_map &map,
 	uint32_t gid,
-	const char *name)
+	std::string_view name)
 {
-	ASSERT(name);
-
 	auto &grp = map[gid];
 	grp.gid = gid;
-	strlcpy(grp.name, (name != nullptr) ? name : "<NA>", MAX_CREDENTIALS_STR_LEN);
+	strlcpy(grp.name, (name.data() != nullptr) ? std::string(name).c_str() : "<NA>", MAX_CREDENTIALS_STR_LEN);
 
 	return &grp;
 }
 
-scap_userinfo *sinsp_usergroup_manager::add_user(const string &container_id, int64_t pid, uint32_t uid, uint32_t gid, const char *name, const char *home, const char *shell, bool notify)
+scap_userinfo *sinsp_usergroup_manager::add_user(const std::string &container_id, int64_t pid, uint32_t uid, uint32_t gid, std::string_view name, std::string_view home, std::string_view shell, bool notify)
 {
 	if (!m_import_users)
 	{
@@ -289,11 +276,11 @@ scap_userinfo *sinsp_usergroup_manager::add_user(const string &container_id, int
 	if(usr)
 	{
 		// Update user if it was already there
-		if (name)
+		if (name.data() != nullptr)
 		{
-			strlcpy(usr->name, name, MAX_CREDENTIALS_STR_LEN);
-			strlcpy(usr->homedir, home, SCAP_MAX_PATH_SIZE);
-			strlcpy(usr->shell, shell, SCAP_MAX_PATH_SIZE);
+			strlcpy(usr->name, std::string(name).c_str(), MAX_CREDENTIALS_STR_LEN);
+			strlcpy(usr->homedir, std::string(home).c_str(), SCAP_MAX_PATH_SIZE);
+			strlcpy(usr->shell, std::string(shell).c_str(), SCAP_MAX_PATH_SIZE);
 		}
 		return usr;
 	}
@@ -305,13 +292,13 @@ scap_userinfo *sinsp_usergroup_manager::add_user(const string &container_id, int
 	return add_container_user(container_id, pid, uid, notify);
 }
 
-scap_userinfo *sinsp_usergroup_manager::add_host_user(uint32_t uid, uint32_t gid, const char *name, const char *home, const char *shell, bool notify)
+scap_userinfo *sinsp_usergroup_manager::add_host_user(uint32_t uid, uint32_t gid, std::string_view name, std::string_view home, std::string_view shell, bool notify)
 {
 	libsinsp_logger()->format(sinsp_logger::SEV_DEBUG,
-			"adding host user: name: %s", name);
+			"adding host user: name: %.*s", static_cast<int>(name.length()), name.data());
 
 	scap_userinfo *retval{nullptr};
-	if (name)
+	if (name.data() != nullptr)
 	{
 		retval = userinfo_map_insert(
 			m_userlist[""],
@@ -411,7 +398,7 @@ bool sinsp_usergroup_manager::rm_user(const string &container_id, uint32_t uid, 
 	return res;
 }
 
-scap_groupinfo *sinsp_usergroup_manager::add_group(const string &container_id, int64_t pid, uint32_t gid, const char *name, bool notify)
+scap_groupinfo *sinsp_usergroup_manager::add_group(const string &container_id, int64_t pid, uint32_t gid, std::string_view name, bool notify)
 {
 	if (!m_import_users)
 	{
@@ -423,9 +410,9 @@ scap_groupinfo *sinsp_usergroup_manager::add_group(const string &container_id, i
 	if (gr)
 	{
 		// Update group if it was already there
-		if (name != nullptr)
+		if (name.data() != nullptr)
 		{
-			strlcpy(gr->name, name, MAX_CREDENTIALS_STR_LEN);
+			strlcpy(gr->name, std::string(name).c_str(), MAX_CREDENTIALS_STR_LEN);
 		}
 		return gr;
 	}
@@ -437,13 +424,13 @@ scap_groupinfo *sinsp_usergroup_manager::add_group(const string &container_id, i
 	return add_container_group(container_id, pid, gid, notify);
 }
 
-scap_groupinfo *sinsp_usergroup_manager::add_host_group(uint32_t gid, const char *name, bool notify)
+scap_groupinfo *sinsp_usergroup_manager::add_host_group(uint32_t gid, std::string_view name, bool notify)
 {
 	libsinsp_logger()->format(sinsp_logger::SEV_DEBUG,
-			"adding host group: name: %s", name);
+			"adding host group: name: %.*s", static_cast<int>(name.length()), name.data());
 
 	scap_groupinfo *gr = nullptr;
-	if (name)
+	if (name.data())
 	{
 		gr = groupinfo_map_insert(m_grouplist[""], gid, name);
 	}
@@ -585,15 +572,15 @@ bool sinsp_usergroup_manager::user_to_sinsp_event(const scap_userinfo *user, sin
 			strlen(user->shell) + 1 +
 			container_id.length() + 1;
 
-	ASSERT(evt->m_pevt_storage == nullptr);
-	evt->m_pevt_storage = new char[totlen];
-	evt->m_pevt = (scap_evt *) evt->m_pevt_storage;
+	ASSERT(evt->get_scap_evt_storage() == nullptr);
+	evt->set_scap_evt_storage(new char[totlen]);
+	evt->set_scap_evt((scap_evt *) evt->get_scap_evt_storage());
 
-	evt->m_cpuid = 0;
-	evt->m_evtnum = 0;
-	evt->m_inspector = m_inspector;
+	evt->set_cpuid(0);
+	evt->set_num(0);
+	evt->set_inspector(m_inspector);
 
-	scap_evt* scapevt = evt->m_pevt;
+	scap_evt* scapevt = evt->get_scap_evt();
 
 	scapevt->ts = (uint64_t) - 1;
 	scapevt->tid = -1;
@@ -601,7 +588,7 @@ bool sinsp_usergroup_manager::user_to_sinsp_event(const scap_userinfo *user, sin
 	scapevt->type = ev_type;
 	scapevt->nparams = 6;
 
-	auto* lens = (uint16_t*)((char *)scapevt + sizeof(struct ppm_evt_hdr));
+	auto* lens = (uint16_t*)((char *)scapevt + sizeof(ppm_evt_hdr));
 	char* valptr = (char*)lens + scapevt->nparams * sizeof(uint16_t);
 
 	lens[0] = sizeof(uint32_t);
@@ -635,15 +622,15 @@ bool sinsp_usergroup_manager::group_to_sinsp_event(const scap_groupinfo *group, 
 			strlen(group->name) + 1 +
 			container_id.length() + 1;
 
-	ASSERT(evt->m_pevt_storage == nullptr);
-	evt->m_pevt_storage = new char[totlen];
-	evt->m_pevt = (scap_evt *) evt->m_pevt_storage;
+	ASSERT(evt->get_scap_evt_storage() == nullptr);
+	evt->set_scap_evt_storage(new char[totlen]);
+	evt->set_scap_evt((scap_evt *) evt->get_scap_evt_storage());
 
-	evt->m_cpuid = 0;
-	evt->m_evtnum = 0;
-	evt->m_inspector = m_inspector;
+	evt->set_cpuid(0);
+	evt->set_num(0);
+	evt->set_inspector(m_inspector);
 
-	scap_evt* scapevt = evt->m_pevt;
+	scap_evt* scapevt = evt->get_scap_evt();
 
 	scapevt->ts = (uint64_t) - 1;
 	scapevt->tid = -1;
@@ -651,7 +638,7 @@ bool sinsp_usergroup_manager::group_to_sinsp_event(const scap_groupinfo *group, 
 	scapevt->type = ev_type;
 	scapevt->nparams = 3;
 
-	auto* lens = (uint16_t*)((char *)scapevt + sizeof(struct ppm_evt_hdr));
+	auto* lens = (uint16_t*)((char *)scapevt + sizeof(ppm_evt_hdr));
 	char* valptr = (char*)lens + scapevt->nparams * sizeof(uint16_t);
 
 	lens[0] = sizeof(uint32_t);

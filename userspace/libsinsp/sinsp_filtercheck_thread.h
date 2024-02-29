@@ -18,7 +18,8 @@ limitations under the License.
 
 #pragma once
 
-#include "sinsp_filtercheck.h"
+#include <libsinsp/sinsp_filtercheck.h>
+#include <libsinsp/state/dynamic_struct.h>
 
 class sinsp_filter_check_thread : public sinsp_filter_check
 {
@@ -108,13 +109,16 @@ public:
 	};
 
 	sinsp_filter_check_thread();
+	virtual ~sinsp_filter_check_thread() = default;
 
-	sinsp_filter_check* allocate_new() override;
+	std::unique_ptr<sinsp_filter_check> allocate_new() override;
 	int32_t parse_field_name(const char* str, bool alloc_state, bool needed_for_filtering) override;
-	uint8_t* extract(sinsp_evt*, OUT uint32_t* len, bool sanitize_strings = true) override;
-	bool compare(sinsp_evt*) override;
 
-	int32_t get_argid();
+	int32_t get_argid() const;
+
+protected:
+	uint8_t* extract(sinsp_evt*, OUT uint32_t* len, bool sanitize_strings = true) override;
+	bool compare_nocache(sinsp_evt*) override;
 
 private:
 	uint64_t extract_exectime(sinsp_evt *evt);
@@ -135,6 +139,5 @@ private:
 	int64_t m_s64val;
 	double m_dval;
 	std::vector<uint64_t> m_last_proc_switch_times;
-	uint64_t m_cursec_ts;
 	std::unique_ptr<libsinsp::state::dynamic_struct::field_accessor<uint64_t>> m_thread_dyn_field_accessor;
 };

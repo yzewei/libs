@@ -14,6 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-include_directories(${LIBSCAP_INCLUDE_DIRS})
 add_library(scap_engine_noop STATIC noop.c)
+
+target_include_directories(scap_engine_noop
+PUBLIC
+    $<BUILD_INTERFACE:${LIBS_DIR}>
+    $<BUILD_INTERFACE:${LIBS_DIR}/userspace>
+    $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}>
+INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+)
+
 add_dependencies(scap_engine_noop uthash)

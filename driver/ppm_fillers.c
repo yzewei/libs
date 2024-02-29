@@ -1391,15 +1391,23 @@ cgroups_error:
 			{
 				/* Support exe_writable */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
-				exe_writable |= (file_permission(exe_file, MAY_WRITE) == 0);
+				exe_writable |= (file_permission(exe_file, MAY_WRITE | MAY_NOT_BLOCK) == 0);
 				exe_writable |= inode_owner_or_capable(file_mnt_idmap(exe_file), file_inode(exe_file));
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0)
-				exe_writable |= (inode_permission(current_user_ns(), file_inode(exe_file), MAY_WRITE) == 0);
+				exe_writable |= (inode_permission(current_user_ns(), file_inode(exe_file), MAY_WRITE | MAY_NOT_BLOCK) == 0);
 				exe_writable |= inode_owner_or_capable(current_user_ns(), file_inode(exe_file));
-#else
-				exe_writable |= (inode_permission(file_inode(exe_file), MAY_WRITE) == 0);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 1, 0)
+				exe_writable |= (inode_permission(file_inode(exe_file), MAY_WRITE | MAY_NOT_BLOCK) == 0);
 				exe_writable |= inode_owner_or_capable(file_inode(exe_file));
 #endif
+				/*
+				 * Kernels < 3.1.0 doesn't support the exe_writable flags due to the MAY_NOT_BLOCK not being
+				 * available. This limitation is related to the fact that this function (f_sched_prog_exec)
+				 * is in a RCU critical section: this means that this function (and its callee) MUST NOT
+				 * call functions that can yield the processor (e.g. inode_permission that deep down in its
+				 * call stack calls a down_read()). This is addressed after the Kernel 3.1.0 where the
+				 * MAY_OT_BLOCK flag is introduced and avoids the processor to being yield.
+				 */
 
 				/* Support exe_upper_layer */
 				exe_upper_layer = ppm_is_upper_layer(exe_file);
@@ -6725,7 +6733,7 @@ int f_sys_bpf_e(struct event_filler_arguments *args)
 	unsigned long val = 0;
 	syscall_get_arguments_deprecated(args, 0, 1, &val);
 
-	/* Parameter 1: cmd (type: PT_INT64) */
+	/* Parameter 1: cmd (type: PT_ENUMFLAGS32) */
 	cmd = (int32_t)val;
 	res = val_to_ring(args, (int64_t)cmd, 0, false, 0);
 	CHECK_RES(res);
@@ -6746,7 +6754,7 @@ int f_sys_bpf_x(struct event_filler_arguments *args)
 
 	/* Parameter 2: cmd (type: PT_INT64) */
 	syscall_get_arguments_deprecated(args, 0, 1, &val);
-	cmd = (int32_t)val;
+	cmd = (int32_t)bpf_cmd_to_scap(val);
 	res = val_to_ring(args, cmd, 0, false, 0);
 	CHECK_RES(res);
 	return add_sentinel(args);
@@ -7416,15 +7424,23 @@ cgroups_error:
 		{
 			/* Support exe_writable */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
-			exe_writable |= (file_permission(exe_file, MAY_WRITE) == 0);
+			exe_writable |= (file_permission(exe_file, MAY_WRITE | MAY_NOT_BLOCK) == 0);
 			exe_writable |= inode_owner_or_capable(file_mnt_idmap(exe_file), file_inode(exe_file));
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0)
-			exe_writable |= (inode_permission(current_user_ns(), file_inode(exe_file), MAY_WRITE) == 0);
+			exe_writable |= (inode_permission(current_user_ns(), file_inode(exe_file), MAY_WRITE | MAY_NOT_BLOCK) == 0);
 			exe_writable |= inode_owner_or_capable(current_user_ns(), file_inode(exe_file));
-#else
-			exe_writable |= (inode_permission(file_inode(exe_file), MAY_WRITE) == 0);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 1, 0)
+			exe_writable |= (inode_permission(file_inode(exe_file), MAY_WRITE | MAY_NOT_BLOCK) == 0);
 			exe_writable |= inode_owner_or_capable(file_inode(exe_file));
 #endif
+			/*
+			 * Kernels < 3.1.0 doesn't support the exe_writable flags due to the MAY_NOT_BLOCK not being
+			 * available. This limitation is related to the fact that this function (f_sched_prog_exec)
+			 * is in a RCU critical section: this means that this function (and its callee) MUST NOT
+			 * call functions that can yield the processor (e.g. inode_permission that deep down in its
+			 * call stack calls a down_read()). This is addressed after the Kernel 3.1.0 where the
+			 * MAY_OT_BLOCK flag is introduced and avoids the processor to being yield.
+			 */
 
 			/* Support exe_upper_layer */
 			exe_upper_layer = ppm_is_upper_layer(exe_file);
@@ -8011,67 +8027,198 @@ int f_sys_finit_module_x(struct event_filler_arguments *args)
 
 int f_sys_mknod_x(struct event_filler_arguments *args)
 {
-       unsigned long val;
-       int res;
-       long retval;
+	unsigned long val;
+	int res;
+	long retval;
 
-       /* Parameter 1: ret (type: PT_ERRNO) */
-       retval = (int64_t) syscall_get_return_value(current,args->regs);
-       res = val_to_ring(args, retval, 0, false, 0);
-       CHECK_RES(res);
+	/* Parameter 1: ret (type: PT_ERRNO) */
+	retval = (int64_t) syscall_get_return_value(current,args->regs);
+	res = val_to_ring(args, retval, 0, false, 0);
+	CHECK_RES(res);
 
-       /* Parameter 2: path (type: PT_CHARBUF) */
-       syscall_get_arguments_deprecated(args, 0, 1, &val);
-       res = val_to_ring(args, val, 0, true, 0);
-       CHECK_RES(res);
+	/* Parameter 2: path (type: PT_CHARBUF) */
+	syscall_get_arguments_deprecated(args, 0, 1, &val);
+	res = val_to_ring(args, val, 0, true, 0);
+	CHECK_RES(res);
 
-       /* Parameter 3: mode (type: PT_MODE) */
-       syscall_get_arguments_deprecated(args, 1, 1, &val);
-       res = val_to_ring(args, mknod_mode_to_scap(val), 0, false, 0);
-       CHECK_RES(res);
+	/* Parameter 3: mode (type: PT_MODE) */
+	syscall_get_arguments_deprecated(args, 1, 1, &val);
+	res = val_to_ring(args, mknod_mode_to_scap(val), 0, false, 0);
+	CHECK_RES(res);
 
-       /* Parameter 4: dev (type: PT_UINT32) */
-       syscall_get_arguments_deprecated(args, 2, 1, &val);
-       res = val_to_ring(args, new_encode_dev(val), 0, false, 0);
-       CHECK_RES(res);
+	/* Parameter 4: dev (type: PT_UINT32) */
+	syscall_get_arguments_deprecated(args, 2, 1, &val);
+	res = val_to_ring(args, new_encode_dev(val), 0, false, 0);
+	CHECK_RES(res);
 
-       return add_sentinel(args);
+	return add_sentinel(args);
 }
 
 int f_sys_mknodat_x(struct event_filler_arguments *args)
 {
-       unsigned long val;
-       int res;
-	   int32_t fd;
-       long retval;
+	unsigned long val;
+	int res;
+	int32_t fd;
+	long retval;
 
-       /* Parameter 1: ret (type: PT_ERRNO) */
-       retval = (int64_t) syscall_get_return_value(current,args->regs);
-       res = val_to_ring(args, retval, 0, false, 0);
-       CHECK_RES(res);
+	/* Parameter 1: ret (type: PT_ERRNO) */
+	retval = (int64_t) syscall_get_return_value(current,args->regs);
+	res = val_to_ring(args, retval, 0, false, 0);
+	CHECK_RES(res);
 
-       /* Parameter 2: dirfd (type: PT_FD) */
-	   syscall_get_arguments_deprecated(args, 0, 1, &val);
-	   fd = (int32_t)val;
-	   if (fd == AT_FDCWD)
-		   fd = PPM_AT_FDCWD;
-	   res = val_to_ring(args, (int64_t)fd, 0, true, 0);
-	   CHECK_RES(res);
+	/* Parameter 2: dirfd (type: PT_FD) */
+	syscall_get_arguments_deprecated(args, 0, 1, &val);
+	fd = (int32_t)val;
+	if (fd == AT_FDCWD)
+		fd = PPM_AT_FDCWD;
+	res = val_to_ring(args, (int64_t)fd, 0, true, 0);
+	CHECK_RES(res);
 
-       /* Parameter 2: path (type: PT_CHARBUF) */
-       syscall_get_arguments_deprecated(args, 1, 1, &val);
-       res = val_to_ring(args, val, 0, true, 0);
-       CHECK_RES(res);
+	/* Parameter 2: path (type: PT_CHARBUF) */
+	syscall_get_arguments_deprecated(args, 1, 1, &val);
+	res = val_to_ring(args, val, 0, true, 0);
+	CHECK_RES(res);
 
-       /* Parameter 3: mode (type: PT_MODE) */
-       syscall_get_arguments_deprecated(args, 2, 1, &val);
-       res = val_to_ring(args, mknod_mode_to_scap(val), 0, false, 0);
-       CHECK_RES(res);
+	/* Parameter 3: mode (type: PT_MODE) */
+	syscall_get_arguments_deprecated(args, 2, 1, &val);
+	res = val_to_ring(args, mknod_mode_to_scap(val), 0, false, 0);
+	CHECK_RES(res);
 
-       /* Parameter 4: dev (type: PT_UINT32) */
-       syscall_get_arguments_deprecated(args, 3, 1, &val);
-       res = val_to_ring(args, new_encode_dev(val), 0, false, 0);
-       CHECK_RES(res);
+	/* Parameter 4: dev (type: PT_UINT32) */
+	syscall_get_arguments_deprecated(args, 3, 1, &val);
+	res = val_to_ring(args, new_encode_dev(val), 0, false, 0);
+	CHECK_RES(res);
 
-       return add_sentinel(args);
+	return add_sentinel(args);
+}
+
+int f_sys_newfstatat_x(struct event_filler_arguments *args)
+{
+	unsigned long val;
+	int res;
+	int32_t fd;
+	long retval;
+
+	/* Parameter 1: ret (type: PT_ERRNO) */
+	retval = (int64_t) syscall_get_return_value(current,args->regs);
+	res = val_to_ring(args, retval, 0, false, 0);
+	CHECK_RES(res);
+
+	/* Parameter 2: dirfd (type: PT_FD) */
+	syscall_get_arguments_deprecated(args, 0, 1, &val);
+	fd = (int32_t)val;
+	if (fd == AT_FDCWD)
+		fd = PPM_AT_FDCWD;
+	res = val_to_ring(args, (int64_t)fd, 0, true, 0);
+	CHECK_RES(res);
+
+	/* Parameter 3: path (type: PT_RELPATH) */
+	syscall_get_arguments_deprecated(args, 1, 1, &val);
+	res = val_to_ring(args, val, 0, true, 0);
+	CHECK_RES(res);
+
+	/* Parameter 4: flags (type: PT_FLAGS32) */
+	syscall_get_arguments_deprecated(args, 3, 1, &val);
+	res = val_to_ring(args, newfstatat_flags_to_scap(val), 0, true, 0);
+	CHECK_RES(res);
+
+	return add_sentinel(args);
+}
+
+int f_sys_process_vm_readv_x(struct event_filler_arguments *args)
+{
+	unsigned long val;
+	long retval;
+	int res;
+	unsigned long iovcnt;
+	int32_t pid;
+
+	/* Parameter 1: ret (type: PT_INT64) */
+	retval = (int64_t) syscall_get_return_value(current,args->regs);
+	res = val_to_ring(args, (int64_t)retval, 0, false, 0);
+	CHECK_RES(res);
+
+	/* Parameter 2: pid (type: PT_PID) */
+	syscall_get_arguments_deprecated(args, 0, 1, &val);
+	pid = (int32_t)val;
+	res = val_to_ring(args, (int64_t)pid, 0, false, 0);
+	CHECK_RES(res);
+
+
+	if(retval > 0)
+	{
+		/* We only get the local iov */
+		syscall_get_arguments_deprecated(args, 1, 1, &val);
+		syscall_get_arguments_deprecated(args, 2, 1, &iovcnt);
+
+	#ifdef CONFIG_COMPAT
+		if (unlikely(args->compat)) {
+			const struct compat_iovec __user *compat_iov = (const struct compat_iovec __user *)compat_ptr(val);
+			res = compat_parse_readv_writev_bufs(args, compat_iov, iovcnt, retval, PRB_FLAG_PUSH_DATA);
+		} else
+	#endif
+		{
+			const struct iovec __user *iov = (const struct iovec __user *)val;
+			res = parse_readv_writev_bufs(args, iov, iovcnt, retval, PRB_FLAG_PUSH_DATA);
+		}
+
+		CHECK_RES(res);
+	}
+	else
+	{
+		/* pushing empty data */
+		res = push_empty_param(args);
+		CHECK_RES(res);
+	}
+
+	return add_sentinel(args);
+}
+
+int f_sys_process_vm_writev_x(struct event_filler_arguments *args)
+{
+	unsigned long val;
+	long retval;
+	int res;
+	unsigned long iovcnt;
+	int32_t pid;
+
+	/* Parameter 1: ret (type: PT_INT64) */
+	retval = (int64_t) syscall_get_return_value(current,args->regs);
+	res = val_to_ring(args, (int64_t)retval, 0, false, 0);
+	CHECK_RES(res);
+
+	/* Parameter 2: pid (type: PT_PID) */
+	syscall_get_arguments_deprecated(args, 0, 1, &val);
+	pid = (int32_t)val;
+	res = val_to_ring(args, (int64_t)pid, 0, false, 0);
+	CHECK_RES(res);
+
+
+	if(retval > 0)
+	{
+		/* We only get the local iov */
+		syscall_get_arguments_deprecated(args, 1, 1, &val);
+		syscall_get_arguments_deprecated(args, 2, 1, &iovcnt);
+
+	#ifdef CONFIG_COMPAT
+		if (unlikely(args->compat)) {
+			const struct compat_iovec __user *compat_iov = (const struct compat_iovec __user *)compat_ptr(val);
+			res = compat_parse_readv_writev_bufs(args, compat_iov, iovcnt, retval, PRB_FLAG_PUSH_DATA);
+		} else
+	#endif
+		{
+			const struct iovec __user *iov = (const struct iovec __user *)val;
+			res = parse_readv_writev_bufs(args, iov, iovcnt, retval, PRB_FLAG_PUSH_DATA);
+		}
+
+		CHECK_RES(res);
+	}
+	else
+	{
+		/* pushing empty data */
+		res = push_empty_param(args);
+		CHECK_RES(res);
+	}
+
+	return add_sentinel(args);
 }

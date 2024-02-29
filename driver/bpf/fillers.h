@@ -5044,10 +5044,13 @@ FILLER(sched_drop, false)
 	return bpf_push_u32_to_ring(data, data->settings->sampling_ratio);
 }
 
-/* In this kernel version the instruction limit was bumped to 1000000 */
+/* In this kernel version the instruction limit was bumped to 1000000.
+ * We use these 2 values because they are the minimum required to run our eBPF probe
+ * on some GKE environments. See https://github.com/falcosecurity/libs/issues/1639
+ */
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0))
-#define MAX_THREADS_GROUPS 30
-#define MAX_HIERARCHY_TRAVERSE 60
+#define MAX_THREADS_GROUPS 25
+#define MAX_HIERARCHY_TRAVERSE 35
 #else
 /* We need to find the right calibration here. On kernel 4.14 the limit
  * seems to be MAX_THREADS_GROUPS*MAX_HIERARCHY_TRAVERSE <= 100
@@ -5798,9 +5801,9 @@ FILLER(sys_bpf_x, true)
 	long fd = bpf_syscall_get_retval(data->ctx);
 	bpf_push_s64_to_ring(data, fd);
 
-	/* Parameter 2: cmd (type: PT_INT32) */
-	int32_t cmd = (int32_t)bpf_syscall_get_argument(data, 0);
-	return bpf_push_s32_to_ring(data, cmd);
+	/* Parameter 2: cmd (type: PT_ENUMFLAGS32) */
+	unsigned long cmd = bpf_syscall_get_argument(data, 0);
+	return bpf_push_s32_to_ring(data, (int32_t)bpf_cmd_to_scap(cmd));
 }
 
 FILLER(sys_unlinkat_x, true)
@@ -7289,5 +7292,102 @@ FILLER(sys_mknodat_x, true)
 	/* Parameter 5: dev (type: PT_UINT32) */
 	uint32_t dev = bpf_syscall_get_argument(data, 3);
 	return bpf_push_u32_to_ring(data, bpf_encode_dev(dev));
+}
+
+FILLER(sys_newfstatat_x, true)
+{
+	unsigned long val;
+
+	/* Parameter 1: ret (type: PT_ERRNO) */
+	long retval = bpf_syscall_get_retval(data->ctx);
+	int res = bpf_push_s64_to_ring(data, retval);
+	CHECK_RES(res);
+
+	/* Parameter 2: fd (type: PT_FD) */
+	int32_t fd = (int32_t)bpf_syscall_get_argument(data, 0);
+	if (fd == AT_FDCWD)
+		fd = PPM_AT_FDCWD;
+	res = bpf_push_s64_to_ring(data, (int64_t)fd);
+	CHECK_RES(res);
+
+	/* Parameter 3: path (type: PT_RELPATH) */
+	val = bpf_syscall_get_argument(data, 1);
+	res = bpf_val_to_ring(data, val);
+	CHECK_RES(res);
+
+	/* Parameter 4: flags (type: PT_FLAGS32) */
+	uint32_t flags = bpf_syscall_get_argument(data, 3);
+	return bpf_push_u32_to_ring(data, newfstatat_flags_to_scap(flags));
+}
+
+
+FILLER(sys_process_vm_readv_x, true)
+{
+	const struct iovec __user *iov;
+	unsigned long iovcnt;
+
+	/* Parameter 1: ret (type: PT_INT64) */
+	long retval = bpf_syscall_get_retval(data->ctx);
+	int res = bpf_push_s64_to_ring(data, (int32_t)retval);
+	CHECK_RES(res);
+
+	/* Parameter 2: pid (type: PT_PID) */
+	pid_t pid = (int32_t)bpf_syscall_get_argument(data, 0);
+	res = bpf_push_s64_to_ring(data, (int64_t)pid);
+	CHECK_RES(res);
+
+	/* Parameter 3: data (type: PT_BYTEBUF) */
+	if (retval > 0)
+	{
+		iov = (const struct iovec __user *)bpf_syscall_get_argument(data, 1);
+		iovcnt = bpf_syscall_get_argument(data, 2);
+
+		res = bpf_parse_readv_writev_bufs(data,
+						iov,
+						iovcnt,
+						retval,
+						PRB_FLAG_PUSH_DATA);
+	}
+	else
+	{
+		res = bpf_push_empty_param(data);
+	}
+
+	return res;
+}
+
+FILLER(sys_process_vm_writev_x, true)
+{
+	const struct iovec __user *iov;
+	unsigned long iovcnt;
+
+	/* Parameter 1: ret (type: PT_INT64) */
+	long retval = bpf_syscall_get_retval(data->ctx);
+	int res = bpf_push_s64_to_ring(data, (int32_t)retval);
+	CHECK_RES(res);
+
+	/* Parameter 2: pid (type: PT_PID) */
+	pid_t pid = (int32_t)bpf_syscall_get_argument(data, 0);
+	res = bpf_push_s64_to_ring(data, (int64_t)pid);
+	CHECK_RES(res);
+
+	/* Parameter 3: data (type: PT_BYTEBUF) */
+	if (retval > 0)
+	{
+		iov = (const struct iovec __user *)bpf_syscall_get_argument(data, 1);
+		iovcnt = bpf_syscall_get_argument(data, 2);
+
+		res = bpf_parse_readv_writev_bufs(data,
+						iov,
+						iovcnt,
+						retval,
+						PRB_FLAG_PUSH_DATA);
+	}
+	else
+	{
+		res = bpf_push_empty_param(data);
+	}
+
+	return res;
 }
 #endif

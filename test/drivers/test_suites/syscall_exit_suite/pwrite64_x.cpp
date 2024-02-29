@@ -1,8 +1,9 @@
 #include "../../event_class/event_class.h"
+#include "../../helpers/file_opener.h"
 
 #ifdef __NR_pwrite64
 
-#if defined(__NR_close) && defined(__NR_open) && defined(__NR_close)
+#if defined(__NR_close) && defined(__NR_openat) && defined(__NR_close)
 
 TEST(SyscallExit, pwrite64X_no_snaplen)
 {
@@ -13,17 +14,14 @@ TEST(SyscallExit, pwrite64X_no_snaplen)
 	/*=============================== TRIGGER SYSCALL  ===========================*/
 
 	/* Open a generic file for writing */
-	int fd = syscall(__NR_open, ".", O_WRONLY | O_TMPFILE);
-	assert_syscall_state(SYSCALL_SUCCESS, "open", fd, NOT_EQUAL, -1);
+	auto fo = file_opener(".", (O_WRONLY | O_TMPFILE));
+	int fd = fo.get_fd();
 
 	/* Write data to the generic file */
 	const unsigned data_len = DEFAULT_SNAPLEN / 2;
 	char buf[data_len] = "hello\0";
 	off_t off = 0;
 	assert_syscall_state(SYSCALL_SUCCESS, "pwrite64", syscall(__NR_pwrite64, fd, (void *)buf, data_len, off), NOT_EQUAL, -1);
-
-	/* Close the generic file */
-	syscall(__NR_close, fd);
 
 	/*=============================== TRIGGER SYSCALL ===========================*/
 

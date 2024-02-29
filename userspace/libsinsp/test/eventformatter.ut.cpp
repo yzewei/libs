@@ -16,11 +16,12 @@ limitations under the License.
 
 */
 
-#include "sinsp.h"
-#include "eventformatter.h"
+#include <libsinsp/sinsp.h>
+#include <libsinsp/eventformatter.h>
 
 #include <gtest/gtest.h>
 
+#include <memory>
 #include <vector>
 #include <string>
 #include <iostream>
@@ -29,15 +30,14 @@ using namespace std;
 
 TEST(eventformatter, get_field_names)
 {
-	auto inspector = new sinsp();
+	sinsp inspector;
 	sinsp_filter_check_list filterlist;
 	string output = "this is a sample output %proc.name %fd.type %proc.pid";
-	sinsp_evt_formatter fmt(inspector, output, filterlist);
+	sinsp_evt_formatter fmt(&inspector, output, filterlist);
 	vector<string> output_fields;
 	fmt.get_field_names(output_fields);
 	ASSERT_EQ(output_fields.size(), 3);
 	ASSERT_NE(find(output_fields.begin(), output_fields.end(), "proc.name"), output_fields.end());
 	ASSERT_NE(find(output_fields.begin(), output_fields.end(), "fd.type"), output_fields.end());
 	ASSERT_NE(find(output_fields.begin(), output_fields.end(), "proc.pid"), output_fields.end());
-	delete inspector;
 }

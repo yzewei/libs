@@ -21,7 +21,7 @@ TEST(SyscallExit, bpfX_invalid_cmd)
 	/* Here we need to call the `bpf` from a child because the main process throws lots of
 	 * `bpf` syscalls to manage the bpf drivers.
 	 */
-	struct clone_args cl_args = {0};
+	clone_args cl_args = {0};
 	cl_args.exit_signal = SIGCHLD;
 	pid_t ret_pid = syscall(__NR_clone3, &cl_args, sizeof(cl_args));
 
@@ -90,14 +90,14 @@ TEST(SyscallExit, bpfX_MAP_CREATE)
 
 	/*=============================== TRIGGER SYSCALL  ===========================*/
 
-	int32_t cmd = 1;
+	int32_t cmd = BPF_MAP_CREATE;
 	union bpf_attr *attr = NULL; 
 	
 
 	/* Here we need to call the `bpf` from a child because the main process throws lots of
 	 * `bpf` syscalls to manage the bpf drivers.
 	 */
-	struct clone_args cl_args = {0};
+	clone_args cl_args = {0};
 	cl_args.exit_signal = SIGCHLD;
 	pid_t ret_pid = syscall(__NR_clone3, &cl_args, sizeof(cl_args));
 
@@ -125,7 +125,7 @@ TEST(SyscallExit, bpfX_MAP_CREATE)
 	{
 		FAIL() << "The bpf call is successful while it should fail..." << std::endl;
 	}
-	
+
 	int64_t errno_value = -EINVAL;
 
 	/*=============================== TRIGGER SYSCALL ===========================*/
@@ -147,8 +147,8 @@ TEST(SyscallExit, bpfX_MAP_CREATE)
 
 	/* Parameter 1: fd (type: PT_FD) */
 	evt_test->assert_numeric_param(1, errno_value);
-	/* Parameter 2: cmd (type: PT_INT32)*/
-	evt_test->assert_numeric_param(2, cmd);
+	/* Parameter 2: cmd (type: PT_ENUMFLAGS32)*/
+	evt_test->assert_numeric_param(2, PPM_BPF_MAP_CREATE);
 
 	/*=============================== ASSERT PARAMETERS  ===========================*/
 

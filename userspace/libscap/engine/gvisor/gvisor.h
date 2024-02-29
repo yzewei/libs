@@ -27,10 +27,10 @@ limitations under the License.
 #include <unordered_map>
 #include <stdint.h>
 #include <utility>
-#include "scap.h"
-#include "scap_stats_v2.h"
-#include "scap_gvisor_stats.h"
-#include "gvisor_platform.h"
+#include <libscap/scap.h>
+#include <libscap/scap_stats_v2.h>
+#include <libscap/engine/gvisor/scap_gvisor_stats.h>
+#include <libscap/engine/gvisor/gvisor_platform.h>
 
 namespace scap_gvisor {
 
@@ -181,8 +181,8 @@ public:
 
     int32_t next(scap_evt **pevent, uint16_t *pdevid, uint32_t *pflags);
 
-    uint32_t get_vxid(uint64_t pid);
-    int32_t get_stats(scap_stats *stats);
+    uint32_t get_vxid(uint64_t pid) const;
+    int32_t get_stats(scap_stats *stats) const;
     const struct scap_stats_v2* get_stats_v2(uint32_t flags, uint32_t* nstats, int32_t* rc);
 private:
     int32_t process_message_from_fd(int fd);

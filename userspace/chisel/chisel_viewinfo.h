@@ -25,7 +25,7 @@ limitations under the License.
 //
 // Aggregation type for table fields
 //
-typedef enum chisel_field_aggregation
+enum chisel_field_aggregation
 {
 	A_NONE,
 	A_SUM,
@@ -33,7 +33,7 @@ typedef enum chisel_field_aggregation
 	A_TIME_AVG,
 	A_MIN,
 	A_MAX,
-} chisel_field_aggregation;
+};
 
 //
 // chisel_view_column_info flags
@@ -150,7 +150,7 @@ public:
 
 	void get_col_names_and_sizes(OUT std::vector<std::string>* colnames, OUT std::vector<int32_t>* colsizes);
 	chisel_view_column_info* get_key();
-	std::string get_filter(uint32_t depth);
+	std::string get_filter(uint32_t depth) const;
 	viewtype get_type()
 	{
 		return m_type;
@@ -205,11 +205,15 @@ public:
 	std::vector<chisel_view_info>* get_views();
 	uint32_t get_selected_view();
 	void set_selected_view(std::string viewid);
-	size_t size()
+	size_t size() const
 	{
 		return m_views.size();
 	}
 	chisel_view_info* at(uint32_t viewnum)
+	{
+		return &m_views[viewnum];
+	}
+	const chisel_view_info* at(uint32_t viewnum) const
 	{
 		return &m_views[viewnum];
 	}

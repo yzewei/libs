@@ -421,7 +421,7 @@ const struct ppm_event_info g_event_info[] = {
 	[PPME_SYSCALL_DUP_1_E] = {"dup", EC_IO_OTHER | EC_SYSCALL, EF_CREATES_FD | EF_USES_FD | EF_MODIFIES_STATE, 1, {{"fd", PT_FD, PF_DEC} } },
 	[PPME_SYSCALL_DUP_1_X] = {"dup", EC_IO_OTHER | EC_SYSCALL, EF_CREATES_FD | EF_USES_FD | EF_MODIFIES_STATE, 2, {{"res", PT_FD, PF_DEC}, {"oldfd", PT_FD, PF_DEC} } },
 	[PPME_SYSCALL_BPF_2_E] = {"bpf", EC_OTHER | EC_SYSCALL, EF_CREATES_FD, 1, {{"cmd", PT_INT64, PF_DEC} } },
-	[PPME_SYSCALL_BPF_2_X] = {"bpf", EC_OTHER | EC_SYSCALL, EF_CREATES_FD, 2, { {"fd", PT_FD, PF_DEC}, {"cmd",PT_INT32, PF_DEC} } },
+	[PPME_SYSCALL_BPF_2_X] = {"bpf", EC_OTHER | EC_SYSCALL, EF_CREATES_FD, 2, { {"fd", PT_FD, PF_DEC}, {"cmd", PT_ENUMFLAGS32, PF_DEC, bpf_commands} } },
 	[PPME_SYSCALL_MLOCK2_E] = {"mlock2", EC_MEMORY | EC_SYSCALL, EF_NONE, 0},
 	[PPME_SYSCALL_MLOCK2_X] = {"mlock2", EC_MEMORY | EC_SYSCALL, EF_NONE, 4, {{"res", PT_ERRNO, PF_DEC}, {"addr", PT_UINT64, PF_HEX}, {"len", PT_UINT64, PF_DEC}, {"flags", PT_UINT32, PF_HEX, mlock2_flags}}},
 	[PPME_SYSCALL_FSCONFIG_E] = {"fsconfig", EC_SYSTEM | EC_SYSCALL, EF_NONE, 0},
@@ -470,6 +470,12 @@ const struct ppm_event_info g_event_info[] = {
 	[PPME_SYSCALL_MKNOD_X] = {"mknod", EC_OTHER | EC_SYSCALL, EF_NONE, 4, {{"res", PT_ERRNO, PF_DEC}, {"path", PT_FSPATH, PF_NA},{"mode", PT_MODE, PF_OCT, mknod_mode},{"dev", PT_UINT32, PF_DEC}}},
  	[PPME_SYSCALL_MKNODAT_E] = {"mknodat", EC_OTHER | EC_SYSCALL, EF_NONE, 0},
 	[PPME_SYSCALL_MKNODAT_X] = {"mknodat", EC_OTHER | EC_SYSCALL, EF_USES_FD, 5, {{"res", PT_ERRNO, PF_DEC}, {"dirfd", PT_FD, PF_DEC}, {"path", PT_FSRELPATH, PF_NA, DIRFD_PARAM(1)},{"mode", PT_MODE, PF_OCT, mknod_mode},{"dev", PT_UINT32, PF_DEC}}},
+	[PPME_SYSCALL_NEWFSTATAT_E] = {"newfstatat", EC_FILE | EC_SYSCALL, EF_NONE, 0},
+	[PPME_SYSCALL_NEWFSTATAT_X] = {"newfstatat", EC_FILE | EC_SYSCALL, EF_USES_FD, 4, {{"res", PT_ERRNO, PF_DEC}, {"dirfd", PT_FD, PF_DEC}, {"path", PT_FSRELPATH, PF_NA, DIRFD_PARAM(1)}, {"flags", PT_FLAGS32, PF_HEX, newfstatat_flags}}},
+	[PPME_SYSCALL_PROCESS_VM_READV_E] = {"process_vm_readv", EC_SYSCALL | EC_IPC, EF_NONE, 0},
+	[PPME_SYSCALL_PROCESS_VM_READV_X] = {"process_vm_readv", EC_SYSCALL | EC_IPC, EF_NONE, 3, {{"res", PT_INT64, PF_DEC}, {"pid", PT_PID, PF_DEC}, {"data", PT_BYTEBUF, PF_NA}}},
+	[PPME_SYSCALL_PROCESS_VM_WRITEV_E] = {"process_vm_writev", EC_SYSCALL | EC_IPC, EF_NONE, 0},
+	[PPME_SYSCALL_PROCESS_VM_WRITEV_X] = {"process_vm_writev", EC_SYSCALL | EC_IPC, EF_NONE, 3, {{"res", PT_INT64, PF_DEC}, {"pid", PT_PID, PF_DEC}, {"data", PT_BYTEBUF, PF_NA}}},
 };
 #pragma GCC diagnostic pop
 

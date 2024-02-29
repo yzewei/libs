@@ -16,11 +16,11 @@ limitations under the License.
 
 */
 
-#include "sinsp_filtercheck_evtin.h"
-#include "sinsp_filtercheck_tracer.h"
-#include "sinsp.h"
-#include "sinsp_int.h"
-#include "strl.h"
+#include <libsinsp/sinsp_filtercheck_evtin.h>
+#include <libsinsp/sinsp_filtercheck_tracer.h>
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
+#include <libscap/strl.h>
 
 using namespace std;
 
@@ -89,7 +89,7 @@ int32_t sinsp_filter_check_evtin::extract_arg(string fldname, string val)
 	}
 	else if(val[fldname.size()] == '.')
 	{
-		const struct ppm_param_info* pi =
+		const ppm_param_info* pi =
 			sinsp_utils::find_longest_matching_evt_param(val.substr(fldname.size() + 1));
 
 		if(pi == NULL)
@@ -189,9 +189,9 @@ int32_t sinsp_filter_check_evtin::parse_field_name(const char* str, bool alloc_s
 	return res;
 }
 
-sinsp_filter_check* sinsp_filter_check_evtin::allocate_new()
+std::unique_ptr<sinsp_filter_check> sinsp_filter_check_evtin::allocate_new()
 {
-	return (sinsp_filter_check*) new sinsp_filter_check_evtin();
+	return std::make_unique<sinsp_filter_check_evtin>();
 }
 
 uint8_t* sinsp_filter_check_evtin::extract(sinsp_evt *evt, OUT uint32_t* len, bool sanitize_strings)

@@ -16,9 +16,9 @@ limitations under the License.
 
 */
 
-#include "sinsp_filtercheck_syslog.h"
-#include "sinsp.h"
-#include "sinsp_int.h"
+#include <libsinsp/sinsp_filtercheck_syslog.h>
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
 
 using namespace std;
 
@@ -57,15 +57,15 @@ sinsp_filter_check_syslog::sinsp_filter_check_syslog()
 	m_info.m_nfields = sizeof(sinsp_filter_check_syslog_fields) / sizeof(sinsp_filter_check_syslog_fields[0]);
 }
 
-sinsp_filter_check* sinsp_filter_check_syslog::allocate_new()
+std::unique_ptr<sinsp_filter_check> sinsp_filter_check_syslog::allocate_new()
 {
-	return (sinsp_filter_check*) new sinsp_filter_check_syslog();
+	return std::make_unique<sinsp_filter_check_syslog>();
 }
 
 uint8_t* sinsp_filter_check_syslog::extract(sinsp_evt *evt, OUT uint32_t* len, bool sanitize_strings)
 {
 	*len = 0;
-	auto& decoder = m_inspector->m_parser->get_syslog_decoder();
+	auto& decoder = m_inspector->get_parser()->get_syslog_decoder();
 	if (!decoder.is_data_valid())
 	{
 		return NULL;

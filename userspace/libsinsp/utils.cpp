@@ -16,14 +16,14 @@ limitations under the License.
 
 */
 
-#include "sinsp.h"
-#include "sinsp_int.h"
-#include "sinsp_errno.h"
-#include "sinsp_signal.h"
-#include "filter.h"
-#include "filter_check_list.h"
-#include "filterchecks.h"
-#include "strl.h"
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
+#include <libsinsp/sinsp_errno.h>
+#include <libsinsp/sinsp_signal.h>
+#include <libsinsp/filter.h>
+#include <libsinsp/filter_check_list.h>
+#include <libsinsp/filterchecks.h>
+#include <libscap/strl.h>
 
 #if !defined(_WIN32) && !defined(MINIMAL_BUILD) && !defined(__EMSCRIPTEN__)
 #include <curl/curl.h>
@@ -612,36 +612,184 @@ std::filesystem::path workaround_win_root_name(std::filesystem::path p)
 	return std::filesystem::path("./" + p.string());
 }
 
-std::string sinsp_utils::concatenate_paths(std::string_view path1, std::string_view path2, size_t max_len)
+//
+// Helper function to move a directory up in a path string
+//
+static inline void rewind_to_parent_path(const char* targetbase, char** tc, const char** pc, uint32_t delta)
 {
-    auto p1 = std::filesystem::path(path1, std::filesystem::path::format::generic_format);
-    auto p2 = std::filesystem::path(path2, std::filesystem::path::format::generic_format);
-
-#ifdef _WIN32
-	// This is an ugly workaround to make sure we will not try to interpret root names (e.g. "c:/", "//?/") on Windows
-	// since this function only deals with unix-like paths
-	p1 = workaround_win_root_name(p1);
-	p2 = workaround_win_root_name(p2);
-#endif // _WIN32
-
-	// note: if p2 happens to be an absolute path, p1 / p2 == p2
-	auto path_concat = (p1 / p2).lexically_normal();
-	std::string result = path_concat.generic_string();
-
-	//
-	// If the path ends with a separator, remove it, as the OS does.
-	//
-	if (result.length() > 1 && result.back() == '/')
+	if(*tc <= targetbase + 1)
 	{
-		result.pop_back();
+		(*pc) += delta;
+		return;
 	}
 
-	if (result.length() > max_len)
+	(*tc)--;
+
+	while((*tc) >= targetbase + 1 && *((*tc) - 1) != '/')
 	{
-		return "/PATH_TOO_LONG";
+		(*tc)--;
 	}
 
-	return result;
+	(*pc) += delta;
+}
+
+//
+// Args:
+//  - target: the string where we are supposed to start copying
+//  - targetbase: the base of the path, i.e. the furthest we can go back when
+//                following parent directories
+//  - path: the path to copy
+//
+static inline void copy_and_sanitize_path(char* target, char* targetbase, const char *path, char separator)
+{
+	char* tc = target;
+	const char* pc = path;
+	g_invalidchar ic;
+	const bool empty_base = target == targetbase;
+
+	while(true)
+	{
+		if(*pc == 0)
+		{
+			*tc = 0;
+
+			//
+			// If the path ends with a separator, remove it, as the OS does.
+			// Properly manage case where path is just "/".
+			//
+			if((tc > (targetbase + 1)) && (*(tc - 1) == separator))
+			{
+				*(tc - 1) = 0;
+			}
+
+			return;
+		}
+
+		if(ic(*pc))
+		{
+			//
+			// Invalid char, substitute with a '.'
+			//
+			*tc = '.';
+			tc++;
+			pc++;
+		}
+		else
+		{
+			//
+			// If path begins with '.' or '.' is the first char after a '/'
+			//
+			if(*pc == '.' && (tc == targetbase || *(tc - 1) == separator))
+			{
+				//
+				// '../', rewind to the previous separator
+				//
+				if(*(pc + 1) == '.' && *(pc + 2) == separator)
+				{
+					rewind_to_parent_path(targetbase, &tc, &pc, 3);
+				}
+				//
+				// '..', with no separator.
+				// This is valid if we are at the end of the string, and in that case we rewind.
+				//
+				else if(*(pc + 1) == '.' && *(pc + 2) == 0)
+				{
+					rewind_to_parent_path(targetbase, &tc, &pc, 2);
+				}
+				//
+				// './', just skip it
+				//
+				else if(*(pc + 1) == separator)
+				{
+					pc += 2;
+				}
+				//
+				// '.', with no separator.
+				// This is valid if we are at the end of the string, and in that case we rewind.
+				//
+				else if(*(pc + 1) == 0)
+				{
+					pc++;
+				}
+				//
+				// Otherwise, we leave the string intact.
+				//
+				else
+				{
+					*tc = *pc;
+					pc++;
+					tc++;
+				}
+			}
+			else if(*pc == separator)
+			{
+				//
+				// separator:
+				// * if the last char is already a separator, skip it
+				// * if we are back at targetbase but targetbase was not empty before, it means we
+				//   fully rewinded back to targetbase and the string is now empty. Skip separator.
+				//   Example: "/foo/../a" -> "/a" BUT "foo/../a" -> "a"
+				//   -> Otherwise: "foo/../a" -> "/a"
+				//
+				if((tc > targetbase && *(tc - 1) == separator) || (tc == targetbase && !empty_base))
+				{
+					pc++;
+				}
+				else
+				{
+					*tc = *pc;
+					tc++;
+					pc++;
+				}
+			}
+			else
+			{
+				//
+				// Normal char, copy it
+				//
+				*tc = *pc;
+				tc++;
+				pc++;
+			}
+		}
+	}
+}
+
+/*
+ * Return false if path2 is an absolute path.
+ * path1 MUST be '/' terminated.
+ * path1 is not sanitized.
+ * If path2 is absolute, we only account for it.
+ */
+static inline bool concatenate_paths_(char* target, uint32_t targetlen, const char* path1, uint32_t len1,
+				      const char* path2, uint32_t len2)
+{
+	if(targetlen < (len1 + len2 + 1))
+	{
+		strlcpy(target, "/PATH_TOO_LONG", targetlen);
+		return false;
+	}
+
+	if(len2 != 0 && path2[0] != '/')
+	{
+		memcpy(target, path1, len1);
+		copy_and_sanitize_path(target + len1, target, path2, '/');
+		return true;
+	}
+	else
+	{
+		target[0] = 0;
+		copy_and_sanitize_path(target, target, path2, '/');
+		return false;
+	}
+}
+
+std::string sinsp_utils::concatenate_paths(std::string_view path1, std::string_view path2)
+{
+	char fullpath[SCAP_MAX_PATH_SIZE];
+	concatenate_paths_(fullpath, SCAP_MAX_PATH_SIZE, path1.data(), (uint32_t)path1.length(), path2.data(),
+				  path2.size());
+	return std::string(fullpath);
 }
 
 
@@ -663,10 +811,10 @@ bool sinsp_utils::is_ipv4_mapped_ipv6(uint8_t* paddr)
 	}
 }
 
-const struct ppm_param_info* sinsp_utils::find_longest_matching_evt_param(std::string name)
+const ppm_param_info* sinsp_utils::find_longest_matching_evt_param(std::string name)
 {
 	uint32_t maxlen = 0;
-	const struct ppm_param_info* res = nullptr;
+	const ppm_param_info* res = nullptr;
 	const auto name_len = name.size();
 
 	for(uint32_t j = 0; j < PPM_EVENT_MAX; j++)
@@ -703,64 +851,14 @@ uint64_t sinsp_utils::get_current_time_ns()
     return tv.tv_sec * (uint64_t) 1000000000 + tv.tv_usec * 1000;
 }
 
-bool sinsp_utils::glob_match(const char *pattern, const char *string)
+bool sinsp_utils::glob_match(const char *pattern, const char *string, const bool& case_insensitive)
 {
 #ifdef _WIN32
 	return PathMatchSpec(string, pattern) == TRUE;
 #else
-	int flags = 0;
+	int flags = case_insensitive ? FNM_CASEFOLD : 0;
 	return fnmatch(pattern, string, flags) == 0;
 #endif
-}
-
-#ifndef CYGWING_AGENT
-#ifndef _WIN32
-#ifdef __GLIBC__
-void sinsp_utils::bt(void)
-{
-	static const char start[] = "BACKTRACE ------------";
-	static const char end[] = "----------------------";
-
-	void *bt[1024];
-	int bt_size;
-	char **bt_syms;
-	int i;
-
-	bt_size = backtrace(bt, 1024);
-	bt_syms = backtrace_symbols(bt, bt_size);
-	libsinsp_logger()->format("%s", start);
-	for (i = 1; i < bt_size; i++)
-	{
-		libsinsp_logger()->format("%s", bt_syms[i]);
-	}
-	libsinsp_logger()->format("%s", end);
-
-	free(bt_syms);
-}
-#endif // __GLIBC__
-#endif // _WIN32
-#endif // CYGWING_AGENT
-
-bool sinsp_utils::find_first_env(std::string &out, const std::vector<std::string> &env, const std::vector<std::string> &keys)
-{
-	for (const auto& key : keys)
-	{
-		for(const auto& env_var : env)
-		{
-			if((env_var.size() > key.size()) && !env_var.compare(0, key.size(), key) && (env_var[key.size()] == '='))
-			{
-				out = env_var.substr(key.size()+1);
-				return true;
-			}
-		}
-	}
-	return false;
-}
-
-bool sinsp_utils::find_env(std::string &out, const std::vector<std::string> &env, const std::string &key)
-{
-	const std::vector<std::string> keys = { key };
-	return find_first_env(out, env, keys);
 }
 
 void sinsp_utils::split_container_image(const std::string &image,
@@ -825,30 +923,6 @@ void sinsp_utils::split_container_image(const std::string &image,
 	{
 		name = repo + name;
 	}
-}
-
-void sinsp_utils::parse_suppressed_types(const std::vector<std::string>& supp_strs,
-					 std::vector<ppm_event_code>* supp_ids)
-{
-	for (auto ii = 0; ii < PPM_EVENT_MAX; ii++)
-	{
-		auto iter = std::find(supp_strs.begin(), supp_strs.end(),
-				      event_name_by_id(ii));
-		if (iter != supp_strs.end())
-		{
-			supp_ids->push_back(static_cast<ppm_event_code>(ii));
-		}
-	}
-}
-
-const char* sinsp_utils::event_name_by_id(uint16_t id)
-{
-	if (id >= PPM_EVENT_MAX)
-	{
-		ASSERT(false);
-		return "NA";
-	}
-	return g_infotables.m_event_info[id].name;
 }
 
 static int32_t gmt2local(time_t t)
@@ -960,34 +1034,6 @@ void sinsp_utils::ts_to_iso_8601(uint64_t ts, OUT std::string* res)
 ///////////////////////////////////////////////////////////////////////////////
 // Time utility functions.
 ///////////////////////////////////////////////////////////////////////////////
-
-bool sinsp_utils::parse_iso_8601_utc_string(const std::string& time_str, uint64_t &ns)
-{
-#ifndef _WIN32
-	tm tm_time{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-	char* rem = strptime(time_str.c_str(), "%Y-%m-%dT%H:%M:", &tm_time);
-	if(rem == NULL || *rem == '\0')
-	{
-		return false;
-	}
-	tm_time.tm_isdst = -1; // strptime does not set this, signal timegm to determine DST
-	ns = timegm(&tm_time) * ONE_SECOND_IN_NS;
-
-	// Handle the possibly fractional seconds now. Also verify
-	// that the string ends with Z.
-	double fractional_secs;
-	if(sscanf(rem, "%lfZ", &fractional_secs) != 1)
-	{
-		return false;
-	}
-
-	ns += (fractional_secs * ONE_SECOND_IN_NS);
-
-	return true;
-#else
-	throw sinsp_exception("parse_iso_8601_utc_string() not implemented on Windows");
-#endif
-}
 
 time_t get_epoch_utc_seconds(const std::string& time_str, const std::string& fmt)
 {
@@ -1171,7 +1217,7 @@ std::string ipv6serveraddr_to_string(ipv6serverinfo* addr, bool resolve)
 	return std::string(buf);
 }
 
-std::string ipv6tuple_to_string(_ipv6tuple* tuple, bool resolve)
+std::string ipv6tuple_to_string(ipv6tuple* tuple, bool resolve)
 {
 	char source_address[INET6_ADDRSTRLEN];
 	if(NULL == inet_ntop(AF_INET6, tuple->m_fields.m_sip.m_b, source_address, 100))
@@ -1779,7 +1825,7 @@ unsigned int read_num_possible_cpus(void)
 ///////////////////////////////////////////////////////////////////////////////
 // Log helper
 ///////////////////////////////////////////////////////////////////////////////
-void sinsp_scap_log_fn(const char* component, const char* msg, const enum falcosecurity_log_severity sev)
+void sinsp_scap_log_fn(const char* component, const char* msg, falcosecurity_log_severity sev)
 {
 	std::string prefix = (component == NULL) ? "" : std::string(component) + ": ";
 	libsinsp_logger()->log(prefix + msg, (sinsp_logger::severity)sev);

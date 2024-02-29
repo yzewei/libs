@@ -26,15 +26,15 @@ limitations under the License.
 #define SCAP_HANDLE_T void
 #endif
 
-#include "engine_handle.h"
-#include "scap_vtable.h"
+#include <libscap/engine_handle.h>
+#include <libscap/scap_vtable.h>
 
-#include "settings.h"
-#include "scap_assert.h"
-#include "scap_log.h"
+#include <libscap/settings.h>
+#include <libscap/scap_assert.h>
+#include <libscap/scap_log.h>
 
 #ifdef __linux__
-#include "linux/scap_cgroup.h"
+#include <libscap/linux/scap_cgroup.h>
 #endif // __linux__
 
 #ifdef __cplusplus
@@ -76,6 +76,7 @@ void scap_free_userlist(scap_userlist* uhandle);
 int32_t scap_proc_fill_pidns_start_ts(char* error, struct scap_threadinfo* tinfo, const char* procdirname);
 
 bool scap_alloc_proclist_info(struct ppm_proclist_info **proclist_p, uint32_t n_entries, char* error);
+void scap_free_proclist_info(struct ppm_proclist_info *proclist);
 
 void scap_free_device_table(scap_mountinfo* dev_list);
 

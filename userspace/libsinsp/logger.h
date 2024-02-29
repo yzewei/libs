@@ -18,9 +18,9 @@ limitations under the License.
 
 #pragma once
 
-#include "logger_macros.h"
-#include "sinsp_public.h"
-#include "scap_log.h"
+#include <libsinsp/logger_macros.h>
+#include <libsinsp/sinsp_public.h>
+#include <libscap/scap_log.h>
 
 #include <atomic>
 #include <string>
@@ -170,7 +170,7 @@ private:
 	sinsp_logger();
 	~sinsp_logger();
 
-	static sinsp_logger* s_logger;
+	static sinsp_logger s_logger;
 
 	/** Disable copy constructor and assignment operator */
 	sinsp_logger(const sinsp_logger&) = delete;

@@ -17,10 +17,10 @@ limitations under the License.
 */
 
 #include <gtest/gtest.h>
-#include "state/static_struct.h"
-#include "state/dynamic_struct.h"
-#include "state/table_registry.h"
-#include "sinsp.h"
+#include <libsinsp/state/static_struct.h>
+#include <libsinsp/state/dynamic_struct.h>
+#include <libsinsp/state/table_registry.h>
+#include <libsinsp/sinsp.h>
 
 TEST(typeinfo, basic_tests)
 {
@@ -305,7 +305,7 @@ TEST(thread_manager, table_access)
     static const int s_threadinfo_static_fields_count = 20;
 
     sinsp inspector;
-    auto table = static_cast<libsinsp::state::table<int64_t>*>(inspector.m_thread_manager);
+    auto table = static_cast<libsinsp::state::table<int64_t>*>(inspector.m_thread_manager.get());
     
     // empty table state and info
     ASSERT_EQ(table->name(), "threads");

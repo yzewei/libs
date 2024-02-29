@@ -16,11 +16,11 @@ limitations under the License.
 
 */
 
-#include "dns_manager.h"
+#include <libsinsp/dns_manager.h>
 
 void sinsp_dns_resolver::refresh(uint64_t erase_timeout, uint64_t base_refresh_timeout, uint64_t max_refresh_timeout, std::future<void> f_exit)
 {
-#if defined(HAS_CAPTURE) && !defined(CYGWING_AGENT) && !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
 	sinsp_dns_manager &manager = sinsp_dns_manager::get();
 	while(true)
 	{
@@ -80,13 +80,13 @@ void sinsp_dns_resolver::refresh(uint64_t erase_timeout, uint64_t base_refresh_t
 #endif
 }
 
-#if defined(HAS_CAPTURE) && !defined(CYGWING_AGENT) && !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
 inline sinsp_dns_manager::dns_info sinsp_dns_manager::resolve(const std::string &name, uint64_t ts)
 {
 	dns_info dinfo;
 
-	struct addrinfo hints, *result, *rp;
-	memset(&hints, 0, sizeof(struct addrinfo));
+	addrinfo hints, *result, *rp;
+	memset(&hints, 0, sizeof(addrinfo));
 
 	// Allow IPv4 or IPv6, all socket types, all protocols
 	hints.ai_family = AF_UNSPEC;
@@ -98,12 +98,12 @@ inline sinsp_dns_manager::dns_info sinsp_dns_manager::resolve(const std::string 
 		{
 			if(rp->ai_family == AF_INET)
 			{
-				dinfo.m_v4_addrs.insert(((struct sockaddr_in*)rp->ai_addr)->sin_addr.s_addr);
+				dinfo.m_v4_addrs.insert(((sockaddr_in*)rp->ai_addr)->sin_addr.s_addr);
 			}
 			else // AF_INET6
 			{
 				ipv6addr v6;
-				memcpy(v6.m_b, ((struct sockaddr_in6*)rp->ai_addr)->sin6_addr.s6_addr, sizeof(ipv6addr));
+				memcpy(v6.m_b, ((sockaddr_in6*)rp->ai_addr)->sin6_addr.s6_addr, sizeof(ipv6addr));
 				dinfo.m_v6_addrs.insert(v6);
 			}
 		}
@@ -115,7 +115,7 @@ inline sinsp_dns_manager::dns_info sinsp_dns_manager::resolve(const std::string 
 
 bool sinsp_dns_manager::match(const char *name, int af, void *addr, uint64_t ts)
 {
-#if defined(HAS_CAPTURE) && !defined(CYGWING_AGENT) && !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
 	if(!m_resolver)
 	{
 		m_resolver = std::make_unique<std::thread>(sinsp_dns_resolver::refresh, m_erase_timeout, m_base_refresh_timeout, m_max_refresh_timeout, m_exit_signal.get_future());
@@ -156,7 +156,7 @@ std::string sinsp_dns_manager::name_of(int af, void *addr, uint64_t ts)
 {
 	std::string ret;
 
-#if defined(HAS_CAPTURE) && !defined(CYGWING_AGENT) && !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
 	if(!m_cache.empty())
 	{
 		m_erase_mutex.lock();

@@ -16,10 +16,10 @@ limitations under the License.
 
 */
 
-#include "sinsp_filtercheck_fd.h"
-#include "sinsp.h"
-#include "sinsp_int.h"
-#include "dns_manager.h"
+#include <libsinsp/sinsp_filtercheck_fd.h>
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
+#include <libsinsp/dns_manager.h>
 
 using namespace std;
 
@@ -106,12 +106,12 @@ sinsp_filter_check_fd::sinsp_filter_check_fd()
 	m_info.m_desc = "Every syscall that has a file descriptor in its arguments has these fields set with information related to the file.";
 	m_info.m_fields = sinsp_filter_check_fd_fields;
 	m_info.m_nfields = sizeof(sinsp_filter_check_fd_fields) / sizeof(sinsp_filter_check_fd_fields[0]);
-	m_info.m_flags = filter_check_info::FL_WORKS_ON_THREAD_TABLE;
+	m_info.m_flags = filter_check_info::FL_NONE;
 }
 
-sinsp_filter_check* sinsp_filter_check_fd::allocate_new()
+std::unique_ptr<sinsp_filter_check> sinsp_filter_check_fd::allocate_new()
 {
-	return (sinsp_filter_check*) new sinsp_filter_check_fd();
+	return std::make_unique<sinsp_filter_check_fd>();
 }
 
 int32_t sinsp_filter_check_fd::extract_arg(string fldname, string val)
@@ -214,7 +214,6 @@ bool sinsp_filter_check_fd::extract_fdname_from_creator(sinsp_evt *evt, OUT uint
 		{
 			sinsp_evt enter_evt;
 			const sinsp_evt_param *parinfo;
-			std::string sdir;
 
 			if(etype == PPME_SYSCALL_OPENAT_X)
 			{
@@ -235,7 +234,7 @@ bool sinsp_filter_check_fd::extract_fdname_from_creator(sinsp_evt *evt, OUT uint
 			parinfo = etype == PPME_SYSCALL_OPENAT_X ? enter_evt.get_param(0) : evt->get_param(1);
 			int64_t dirfd = parinfo->as<int64_t>();
 
-			sinsp_parser::parse_dirfd(evt, name.data(), dirfd, &sdir);
+			std::string sdir = m_inspector->get_parser()->parse_dirfd(evt, name, dirfd);
 
 			if(fd_nameraw)
 			{
@@ -436,13 +435,13 @@ bool sinsp_filter_check_fd::extract(sinsp_evt *evt, OUT std::vector<extract_valu
 		// All of the pointers come from the fd_typesting() function so
 		// we shouldn't have the situation of two distinct pointers to
 		// the same string literal and we can just compare based on pointer
-		std::unordered_set<char*> fd_types;
+		std::unordered_set<const char*> fd_types;
 
 		// Iterate over the list of open file descriptors and add all
 		// unique file descriptor types to the vector for comparison
-		auto fd_type_gather = [&fd_types, &values](uint64_t, const sinsp_fdinfo_t& fdinfo)
+		auto fd_type_gather = [&fd_types, &values](uint64_t, const sinsp_fdinfo& fdinfo)
 		{
-			char* type = fdinfo.get_typestring();
+			const char* type = fdinfo.get_typestring();
 
 			if (fd_types.emplace(type).second)
 			{
@@ -930,11 +929,11 @@ uint8_t* sinsp_filter_check_fd::extract(sinsp_evt *evt, OUT uint32_t* len, bool 
 			m_tstr = "";
 			if(evt_type == SCAP_FD_IPV4_SOCK)
 			{
-				m_tstr = port_to_string(m_fdinfo->m_sockinfo.m_ipv4info.m_fields.m_sport, this->m_fdinfo->get_l4proto(), m_inspector->m_hostname_and_port_resolution_enabled);
+				m_tstr = port_to_string(m_fdinfo->m_sockinfo.m_ipv4info.m_fields.m_sport, this->m_fdinfo->get_l4proto(), m_inspector->is_hostname_and_port_resolution_enabled());
 			}
 			else if(evt_type == SCAP_FD_IPV6_SOCK)
 			{
-				m_tstr = port_to_string(m_fdinfo->m_sockinfo.m_ipv6info.m_fields.m_sport, this->m_fdinfo->get_l4proto(), m_inspector->m_hostname_and_port_resolution_enabled);
+				m_tstr = port_to_string(m_fdinfo->m_sockinfo.m_ipv6info.m_fields.m_sport, this->m_fdinfo->get_l4proto(), m_inspector->is_hostname_and_port_resolution_enabled());
 			}
 
 			RETURN_EXTRACT_STRING(m_tstr);
@@ -1024,11 +1023,11 @@ uint8_t* sinsp_filter_check_fd::extract(sinsp_evt *evt, OUT uint32_t* len, bool 
 			m_tstr = "";
 			if(evt_type == SCAP_FD_IPV4_SOCK)
 			{
-				m_tstr = port_to_string(nport, this->m_fdinfo->get_l4proto(), m_inspector->m_hostname_and_port_resolution_enabled);
+				m_tstr = port_to_string(nport, this->m_fdinfo->get_l4proto(), m_inspector->is_hostname_and_port_resolution_enabled());
 			}
 			else if(evt_type == SCAP_FD_IPV6_SOCK)
 			{
-				m_tstr = port_to_string(nport, this->m_fdinfo->get_l4proto(), m_inspector->m_hostname_and_port_resolution_enabled);
+				m_tstr = port_to_string(nport, this->m_fdinfo->get_l4proto(), m_inspector->is_hostname_and_port_resolution_enabled());
 			}
 
 			RETURN_EXTRACT_STRING(m_tstr);
@@ -1203,7 +1202,7 @@ uint8_t* sinsp_filter_check_fd::extract(sinsp_evt *evt, OUT uint32_t* len, bool 
 				}
 			}
 
-			m_tstr = port_to_string(nport, this->m_fdinfo->get_l4proto(), m_inspector->m_hostname_and_port_resolution_enabled);
+			m_tstr = port_to_string(nport, this->m_fdinfo->get_l4proto(), m_inspector->is_hostname_and_port_resolution_enabled());
 			RETURN_EXTRACT_STRING(m_tstr);
 		}
 		break;
@@ -1409,16 +1408,16 @@ bool sinsp_filter_check_fd::compare_ip(sinsp_evt *evt)
 		{
 			if(m_cmpop == CO_EQ || m_cmpop == CO_IN)
 			{
-				if(flt_compare(m_cmpop, PT_IPV4ADDR, &m_fdinfo->m_sockinfo.m_ipv4info.m_fields.m_sip) ||
-					flt_compare(m_cmpop, PT_IPV4ADDR, &m_fdinfo->m_sockinfo.m_ipv4info.m_fields.m_dip))
+				if(compare_rhs(m_cmpop, PT_IPV4ADDR, &m_fdinfo->m_sockinfo.m_ipv4info.m_fields.m_sip) ||
+					compare_rhs(m_cmpop, PT_IPV4ADDR, &m_fdinfo->m_sockinfo.m_ipv4info.m_fields.m_dip))
 				{
 					return true;
 				}
 			}
 			else if(m_cmpop == CO_NE)
 			{
-				if(flt_compare(m_cmpop, PT_IPV4ADDR, &m_fdinfo->m_sockinfo.m_ipv4info.m_fields.m_sip) &&
-					flt_compare(m_cmpop, PT_IPV4ADDR, &m_fdinfo->m_sockinfo.m_ipv4info.m_fields.m_dip))
+				if(compare_rhs(m_cmpop, PT_IPV4ADDR, &m_fdinfo->m_sockinfo.m_ipv4info.m_fields.m_sip) &&
+					compare_rhs(m_cmpop, PT_IPV4ADDR, &m_fdinfo->m_sockinfo.m_ipv4info.m_fields.m_dip))
 				{
 					return true;
 				}
@@ -1432,7 +1431,7 @@ bool sinsp_filter_check_fd::compare_ip(sinsp_evt *evt)
 		{
 			if(m_cmpop == CO_EQ || m_cmpop == CO_NE || m_cmpop == CO_IN)
 			{
-				return flt_compare(m_cmpop, PT_IPV4ADDR, &m_fdinfo->m_sockinfo.m_ipv4serverinfo.m_ip);
+				return compare_rhs(m_cmpop, PT_IPV4ADDR, &m_fdinfo->m_sockinfo.m_ipv4serverinfo.m_ip);
 			}
 			else
 			{
@@ -1443,16 +1442,16 @@ bool sinsp_filter_check_fd::compare_ip(sinsp_evt *evt)
 		{
 			if(m_cmpop == CO_EQ || m_cmpop == CO_IN)
 			{
-				if(flt_compare(m_cmpop, PT_IPV6ADDR, &m_fdinfo->m_sockinfo.m_ipv6info.m_fields.m_sip) ||
-					flt_compare(m_cmpop, PT_IPV6ADDR, &m_fdinfo->m_sockinfo.m_ipv6info.m_fields.m_dip))
+				if(compare_rhs(m_cmpop, PT_IPV6ADDR, &m_fdinfo->m_sockinfo.m_ipv6info.m_fields.m_sip) ||
+					compare_rhs(m_cmpop, PT_IPV6ADDR, &m_fdinfo->m_sockinfo.m_ipv6info.m_fields.m_dip))
 				{
 					return true;
 				}
 			}
 			else if(m_cmpop == CO_NE)
 			{
-				if(flt_compare(m_cmpop, PT_IPV6ADDR, &m_fdinfo->m_sockinfo.m_ipv6info.m_fields.m_sip) &&
-					flt_compare(m_cmpop, PT_IPV6ADDR, &m_fdinfo->m_sockinfo.m_ipv6info.m_fields.m_dip))
+				if(compare_rhs(m_cmpop, PT_IPV6ADDR, &m_fdinfo->m_sockinfo.m_ipv6info.m_fields.m_sip) &&
+					compare_rhs(m_cmpop, PT_IPV6ADDR, &m_fdinfo->m_sockinfo.m_ipv6info.m_fields.m_dip))
 				{
 					return true;
 				}
@@ -1466,7 +1465,7 @@ bool sinsp_filter_check_fd::compare_ip(sinsp_evt *evt)
 		{
 			if(m_cmpop == CO_EQ || m_cmpop == CO_NE || m_cmpop == CO_IN)
 			{
-				return flt_compare(m_cmpop, PT_IPV6ADDR, &m_fdinfo->m_sockinfo.m_ipv6serverinfo.m_ip);
+				return compare_rhs(m_cmpop, PT_IPV6ADDR, &m_fdinfo->m_sockinfo.m_ipv6serverinfo.m_ip);
 			}
 			else
 			{
@@ -1607,11 +1606,11 @@ bool sinsp_filter_check_fd::compare_port(sinsp_evt *evt)
 			break;
 
 		case CO_IN:
-			if(flt_compare(m_cmpop,
+			if(compare_rhs(m_cmpop,
 				       PT_PORT,
 				       sport,
 				       sizeof(*sport)) ||
-			   flt_compare(m_cmpop,
+			   compare_rhs(m_cmpop,
 				       PT_PORT,
 				       dport,
 				       sizeof(*dport)))
@@ -1807,7 +1806,7 @@ bool sinsp_filter_check_fd::extract_fd(sinsp_evt *evt)
 	return true;
 }
 
-bool sinsp_filter_check_fd::compare(sinsp_evt *evt)
+bool sinsp_filter_check_fd::compare_nocache(sinsp_evt *evt)
 {
 	//
 	// Some fields are filter only and therefore get a special treatment
@@ -1827,11 +1826,11 @@ bool sinsp_filter_check_fd::compare(sinsp_evt *evt)
 	else if(m_field_id == TYPE_FDTYPES)
 	{
 		m_extracted_values.clear();
-		if(!extract_cached(evt, m_extracted_values, false))
+		if(!extract(evt, m_extracted_values, false))
 		{
 			return false;
 		}
-		return flt_compare(m_cmpop, m_info.m_fields[m_field_id].m_type, m_extracted_values);
+		return compare_rhs(m_cmpop, m_info.m_fields[m_field_id].m_type, m_extracted_values);
 	}
 
 	//
@@ -1859,7 +1858,7 @@ bool sinsp_filter_check_fd::compare(sinsp_evt *evt)
 		return false;
 	}
 
-	return flt_compare(m_cmpop,
+	return compare_rhs(m_cmpop,
 			   m_info.m_fields[m_field_id].m_type,
 			   extracted_val,
 			   len);

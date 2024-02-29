@@ -18,11 +18,11 @@ limitations under the License.
 
 #pragma once
 
-#include "scap_log.h"
+#include <libscap/scap_log.h>
 
 #include <bpf/libbpf.h>
 #include <bpf/bpf.h>
-#include <shared_definitions/struct_definitions.h>
+#include <driver/modern_bpf/shared_definitions/struct_definitions.h>
 #include <bpf_probe.skel.h>
 #include <unistd.h>
 #include <errno.h>
@@ -65,3 +65,4 @@ struct internal_state
 extern struct internal_state g_state;
 
 extern void pman_print_error(const char* error_message);
+extern void pman_print_msg(enum falcosecurity_log_severity level, const char* error_message);

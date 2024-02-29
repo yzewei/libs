@@ -16,9 +16,9 @@ limitations under the License.
 
 */
 
-#include "sinsp_filtercheck_group.h"
-#include "sinsp.h"
-#include "sinsp_int.h"
+#include <libsinsp/sinsp_filtercheck_group.h>
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
 
 using namespace std;
 
@@ -47,12 +47,12 @@ sinsp_filter_check_group::sinsp_filter_check_group()
 	m_info.m_desc = "Information about the user group.";
 	m_info.m_fields = sinsp_filter_check_group_fields;
 	m_info.m_nfields = sizeof(sinsp_filter_check_group_fields) / sizeof(sinsp_filter_check_group_fields[0]);
-	m_info.m_flags = filter_check_info::FL_WORKS_ON_THREAD_TABLE;
+	m_info.m_flags = filter_check_info::FL_NONE;
 }
 
-sinsp_filter_check* sinsp_filter_check_group::allocate_new()
+std::unique_ptr<sinsp_filter_check> sinsp_filter_check_group::allocate_new()
 {
-	return (sinsp_filter_check*) new sinsp_filter_check_group();
+	return std::make_unique<sinsp_filter_check_group>();
 }
 
 uint8_t* sinsp_filter_check_group::extract(sinsp_evt *evt, OUT uint32_t* len, bool sanitize_strings)

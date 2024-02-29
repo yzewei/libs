@@ -26,10 +26,10 @@ limitations under the License.
 #include <netinet/in.h>
 #endif // _WIN32
 
-#include "scap.h"
-#include "scap-int.h"
+#include <libscap/scap.h>
+#include <libscap/scap-int.h>
 
-#include "strl.h"
+#include <libscap/strl.h>
 
 //
 // Get the event info table
@@ -331,7 +331,10 @@ int32_t scap_event_encode_params_v(const struct scap_sized_buffer event_buf, siz
 	len = len + sizeof(uint32_t);
 #endif
 
-	*event_size = len;
+	if (event_size != NULL)
+	{
+		*event_size = len;
+	}
 
 	// we were not able to write the event to the buffer
 	if (!scap_buffer_can_fit(event_buf, len))

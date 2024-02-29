@@ -18,9 +18,9 @@ limitations under the License.
 
 #include <utility>
 
-#include "container_info.h"
-#include "sinsp.h"
-#include "sinsp_int.h"
+#include <libsinsp/container_info.h>
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
 
 std::vector<std::string> sinsp_container_info::container_health_probe::probe_type_names = {
 	"None",
@@ -150,7 +150,7 @@ const sinsp_container_info::container_mount_info *sinsp_container_info::mount_by
 
 std::shared_ptr<sinsp_threadinfo> sinsp_container_info::get_tinfo(sinsp* inspector) const
 {
-	std::shared_ptr<sinsp_threadinfo> tinfo(inspector->build_threadinfo());
+	std::shared_ptr<sinsp_threadinfo> tinfo(inspector->build_threadinfo().release());
 	tinfo->m_tid = -1;
 	tinfo->m_pid = -1;
 	tinfo->m_vtid = -2;

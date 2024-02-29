@@ -21,7 +21,7 @@ limitations under the License.
 #include <sstream>
 #include <vector>
 
-#include <ppm_events_public.h>
+#include <driver/ppm_events_public.h>
 
 #include "test_plugins.h"
 
@@ -30,13 +30,15 @@ limitations under the License.
  * - Is compatible with the "sample" event source only
  * - Extracts a simple field containing the string inside the events' payload
  */
-typedef struct plugin_state
+struct plugin_state
 {
     std::string lasterr;
     std::string strstorage;
     const char* strptr;
     std::vector<uint16_t> event_types;
-} plugin_state;
+    ss_plugin_owner_t* owner;
+    ss_plugin_log_fn_t log;
+};
 
 static const char* plugin_get_required_api_version()
 {
@@ -94,6 +96,12 @@ static ss_plugin_t* plugin_init(const ss_plugin_init_input* in, ss_plugin_rc* rc
 {
     plugin_state *ret = new plugin_state();
 
+    //save logger and owner in the state
+    ret->log = in->log_fn;
+    ret->owner = in->owner;
+
+    ret->log(ret->owner, NULL, "initializing plugin...", SS_PLUGIN_LOG_SEV_INFO);
+
     // init config may indicate the comma-separated, event-types to filter
     std::string cfg = in->config;
     if (!cfg.empty())
@@ -122,6 +130,9 @@ static ss_plugin_t* plugin_init(const ss_plugin_init_input* in, ss_plugin_rc* rc
 
 static void plugin_destroy(ss_plugin_t* s)
 {
+    plugin_state *ps = (plugin_state *) s;
+    ps->log(ps->owner, NULL, "destroying plugin...", SS_PLUGIN_LOG_SEV_INFO);
+
     delete ((plugin_state *) s);
 }
 
@@ -151,6 +162,14 @@ static ss_plugin_rc plugin_extract_fields(ss_plugin_t *s, const ss_plugin_event_
     return SS_PLUGIN_SUCCESS;
 }
 
+static ss_plugin_rc plugin_set_config(ss_plugin_t *s, const ss_plugin_set_config_input* i)
+{
+    plugin_state *ps = (plugin_state *) s;
+    ps->log(ps->owner, NULL, "new config!", SS_PLUGIN_LOG_SEV_INFO);
+
+    return SS_PLUGIN_SUCCESS;
+}
+
 void get_plugin_api_sample_plugin_extract(plugin_api& out)
 {
     memset(&out, 0, sizeof(plugin_api));
@@ -166,4 +185,5 @@ void get_plugin_api_sample_plugin_extract(plugin_api& out)
     out.get_extract_event_sources = plugin_get_extract_event_sources;
     out.get_extract_event_types = plugin_get_extract_event_types;
     out.extract_fields = plugin_extract_fields;
+    out.set_config = plugin_set_config;
 }

@@ -1,13 +1,14 @@
 #pragma once
 
+#include <memory>
+
 /**
  * This api defines a relationship between libsinsp and an external event processor.
  * Such external processors should derive from event_processor and register themselves with
  * sinsp in order to start receiving appropriate callbacks.
  */
 
-// Required until the chisel_api dependency on the analyzer can be removed
-class statsd_metric;
+class chisel_metric;
 class sinsp;
 class threadinfo;
 
@@ -40,9 +41,9 @@ public:
 	virtual void process_event(sinsp_evt* evt, event_return rc) = 0;
 
 	/**
-	 * Required until the chisel_api dependency on the analyzer can be removed
+	 * Handles a metric pushed by a chisel
 	 */
-	virtual void add_chisel_metric(statsd_metric* metric) = 0;
+	virtual void add_chisel_metric(chisel_metric* metric) = 0;
 
 	/**
 	 * Some event processors allocate different thread types with extra data.
@@ -51,7 +52,16 @@ public:
 	 * If this is overridden by the event processor, the processor MUST be registered
 	 * before the sinsp object is init-ed
 	 */
-	virtual sinsp_threadinfo* build_threadinfo(sinsp* inspector);
+	virtual std::unique_ptr<sinsp_threadinfo> build_threadinfo(sinsp* inspector);
+
+	/**
+	 * Some event processors allocate different fd info types with extra data.
+	 *
+	 * This allows the processor to override the fd info builder. Note that
+	 * If this is overridden by the event processor, the processor MUST be registered
+	 * before the sinsp object is init-ed
+	 */
+	virtual std::unique_ptr<sinsp_fdinfo> build_fdinfo(sinsp* inspector);
 };
 
 }  // namespace libsinsp

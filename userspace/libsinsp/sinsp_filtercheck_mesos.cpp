@@ -16,9 +16,9 @@ limitations under the License.
 
 */
 
-#include "sinsp_filtercheck_mesos.h"
-#include "sinsp.h"
-#include "sinsp_int.h"
+#include <libsinsp/sinsp_filtercheck_mesos.h>
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
 
 using namespace std;
 
@@ -51,12 +51,12 @@ sinsp_filter_check_mesos::sinsp_filter_check_mesos()
 	m_info.m_desc = "Mesos related context.";
 	m_info.m_fields = sinsp_filter_check_mesos_fields;
 	m_info.m_nfields = sizeof(sinsp_filter_check_mesos_fields) / sizeof(sinsp_filter_check_mesos_fields[0]);
-	m_info.m_flags = filter_check_info::FL_WORKS_ON_THREAD_TABLE;
+	m_info.m_flags = filter_check_info::FL_NONE;
 }
 
-sinsp_filter_check* sinsp_filter_check_mesos::allocate_new()
+std::unique_ptr<sinsp_filter_check> sinsp_filter_check_mesos::allocate_new()
 {
-	return (sinsp_filter_check*) new sinsp_filter_check_mesos();
+	return std::make_unique<sinsp_filter_check_mesos>();
 }
 
 int32_t sinsp_filter_check_mesos::parse_field_name(const char* str, bool alloc_state, bool needed_for_filtering)

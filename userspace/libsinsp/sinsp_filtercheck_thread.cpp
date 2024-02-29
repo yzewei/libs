@@ -16,9 +16,9 @@ limitations under the License.
 
 */
 
-#include "sinsp_filtercheck_thread.h"
-#include "sinsp.h"
-#include "sinsp_int.h"
+#include <libsinsp/sinsp_filtercheck_thread.h>
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
 
 using namespace std;
 
@@ -134,18 +134,17 @@ sinsp_filter_check_thread::sinsp_filter_check_thread()
 	m_info.m_desc = "Additional information about the process and thread executing the syscall event.";
 	m_info.m_fields = sinsp_filter_check_thread_fields;
 	m_info.m_nfields = sizeof(sinsp_filter_check_thread_fields) / sizeof(sinsp_filter_check_thread_fields[0]);
-	m_info.m_flags = filter_check_info::FL_WORKS_ON_THREAD_TABLE;
+	m_info.m_flags = filter_check_info::FL_NONE;
 
 	m_u64val = 0;
-	m_cursec_ts = 0;
 }
 
-sinsp_filter_check* sinsp_filter_check_thread::allocate_new()
+std::unique_ptr<sinsp_filter_check> sinsp_filter_check_thread::allocate_new()
 {
-	return (sinsp_filter_check*) new sinsp_filter_check_thread();
+	return std::make_unique<sinsp_filter_check_thread>();
 }
 
-int32_t sinsp_filter_check_thread::extract_arg(std::string fldname, std::string val, OUT const struct ppm_param_info** parinfo)
+int32_t sinsp_filter_check_thread::extract_arg(std::string fldname, std::string val, OUT const ppm_param_info** parinfo)
 {
 	std::string::size_type parsed_len = 0;
 
@@ -572,7 +571,7 @@ uint8_t* sinsp_filter_check_thread::extract(sinsp_evt *evt, OUT uint32_t* len, b
 			}
 
 			// This can occur when the session leader process has exited or if the process
-			// is running in a pid namespace and we only have the virtual session id, as 
+			// is running in a pid namespace and we only have the virtual session id, as
 			// seen from its pid namespace.
 			// Find the highest ancestor process that has the same session id and
 			// declare it to be the session leader.
@@ -614,7 +613,7 @@ uint8_t* sinsp_filter_check_thread::extract(sinsp_evt *evt, OUT uint32_t* len, b
 			}
 
 			// This can occur when the session leader process has exited or if the process
-			// is running in a pid namespace and we only have the virtual session id, as 
+			// is running in a pid namespace and we only have the virtual session id, as
 			// seen from its pid namespace.
 			// Find the highest ancestor process that has the same session id and
 			// declare it to be the session leader.
@@ -654,9 +653,9 @@ uint8_t* sinsp_filter_check_thread::extract(sinsp_evt *evt, OUT uint32_t* len, b
 					RETURN_EXTRACT_STRING(m_tstr);
 				}
 			}
-			
+
 			// This can occur when the session leader process has exited or if the process
-			// is running in a pid namespace and we only have the virtual session id, as 
+			// is running in a pid namespace and we only have the virtual session id, as
 			// seen from its pid namespace.
 			// Find the highest ancestor process that has the same session id and
 			// declare it to be the session leader.
@@ -697,7 +696,7 @@ uint8_t* sinsp_filter_check_thread::extract(sinsp_evt *evt, OUT uint32_t* len, b
 				}
 			}
 			// This can occur when the process group leader process has exited or if the process
-			// is running in a pid namespace and we only have the virtual process group id, as 
+			// is running in a pid namespace and we only have the virtual process group id, as
 			// seen from its pid namespace.
 			// Find the highest ancestor process that has the same process group id and
 			// declare it to be the process group leader.
@@ -738,7 +737,7 @@ uint8_t* sinsp_filter_check_thread::extract(sinsp_evt *evt, OUT uint32_t* len, b
 				}
 			}
 			// This can occur when the process group leader process has exited or if the process
-			// is running in a pid namespace and we only have the virtual process group id, as 
+			// is running in a pid namespace and we only have the virtual process group id, as
 			// seen from its pid namespace.
 			// Find the highest ancestor process that has the same process group id and
 			// declare it to be the process group leader.
@@ -781,7 +780,7 @@ uint8_t* sinsp_filter_check_thread::extract(sinsp_evt *evt, OUT uint32_t* len, b
 			}
 
 			// This can occur when the process group leader process has exited or if the process
-			// is running in a pid namespace and we only have the virtual process group id, as 
+			// is running in a pid namespace and we only have the virtual process group id, as
 			// seen from its pid namespace.
 			// Find the highest ancestor process that has the same process group id and
 			// declare it to be the process group leader.
@@ -1649,7 +1648,7 @@ bool sinsp_filter_check_thread::compare_full_apid(sinsp_evt *evt)
 	{
 		bool res;
 
-		res = flt_compare(m_cmpop,
+		res = compare_rhs(m_cmpop,
 				  PT_PID,
 				  &pt->m_pid);
 
@@ -1702,7 +1701,7 @@ bool sinsp_filter_check_thread::compare_full_aname(sinsp_evt *evt)
 	{
 		bool res;
 
-		res = flt_compare(m_cmpop,
+		res = compare_rhs(m_cmpop,
 				  PT_CHARBUF,
 				  (void*)pt->m_comm.c_str());
 
@@ -1755,7 +1754,7 @@ bool sinsp_filter_check_thread::compare_full_aexe(sinsp_evt *evt)
 	{
 		bool res;
 
-		res = flt_compare(m_cmpop,
+		res = compare_rhs(m_cmpop,
 				  PT_CHARBUF,
 				  (void*)pt->m_exe.c_str());
 
@@ -1808,7 +1807,7 @@ bool sinsp_filter_check_thread::compare_full_aexepath(sinsp_evt *evt)
 	{
 		bool res;
 
-		res = flt_compare(m_cmpop,
+		res = compare_rhs(m_cmpop,
 				  PT_CHARBUF,
 				  (void*)pt->m_exepath.c_str());
 
@@ -1863,7 +1862,7 @@ bool sinsp_filter_check_thread::compare_full_acmdline(sinsp_evt *evt)
 		std::string cmdline;
 		sinsp_threadinfo::populate_cmdline(cmdline, pt);
 
-		res = flt_compare(m_cmpop,
+		res = compare_rhs(m_cmpop,
 				  PT_CHARBUF,
 				  (void*)cmdline.c_str());
 
@@ -1915,7 +1914,7 @@ bool sinsp_filter_check_thread::compare_full_aenv(sinsp_evt *evt)
 	sinsp_threadinfo::visitor_func_t visitor = [this, &found] (sinsp_threadinfo *pt)
 	{
 		std::string full_env = pt->concatenate_all_env();
-		bool res = flt_compare(m_cmpop,
+		bool res = compare_rhs(m_cmpop,
 				  PT_CHARBUF,
 				  (void*)full_env.c_str());
 
@@ -1935,7 +1934,7 @@ bool sinsp_filter_check_thread::compare_full_aenv(sinsp_evt *evt)
 	return found;
 }
 
-bool sinsp_filter_check_thread::compare(sinsp_evt *evt)
+bool sinsp_filter_check_thread::compare_nocache(sinsp_evt *evt)
 {
 	if(m_field_id == TYPE_APID)
 	{
@@ -1980,10 +1979,10 @@ bool sinsp_filter_check_thread::compare(sinsp_evt *evt)
 		}
 	}
 
-	return sinsp_filter_check::compare(evt);
+	return sinsp_filter_check::compare_nocache(evt);
 }
 
-int32_t sinsp_filter_check_thread::get_argid()
+int32_t sinsp_filter_check_thread::get_argid() const
 {
 	return m_argid;
 }

@@ -20,7 +20,7 @@ limitations under the License.
 #include <cstdlib>
 #include <sstream>
 
-#include <ppm_events_public.h>
+#include <driver/ppm_events_public.h>
 #include "sample_table.h"
 #include "test_plugins.h"
 
@@ -33,14 +33,16 @@ limitations under the License.
  * - Owns and defines a new table that has one entry for each event type,
  *   with a field representing a counter for all events of that type across all threads.
  */
-typedef struct plugin_state
+struct plugin_state
 {
     std::string lasterr;
     ss_plugin_table_t* thread_table;
     ss_plugin_table_field_t* thread_opencount_field;
     sample_table::ptr_t event_count_table;
     ss_plugin_table_field_t* event_count_table_count_field;
-} plugin_state;
+    ss_plugin_owner_t* owner;
+    ss_plugin_log_fn_t log;
+};
 
 static inline bool evt_type_is_open(uint16_t type)
 {
@@ -110,6 +112,12 @@ static ss_plugin_t* plugin_init(const ss_plugin_init_input* in, ss_plugin_rc* rc
     *rc = SS_PLUGIN_SUCCESS;
     plugin_state *ret = new plugin_state();
 
+    //save logger and owner in the state
+    ret->log = in->log_fn;
+    ret->owner = in->owner;
+
+    ret->log(ret->owner, NULL, "initializing plugin...", SS_PLUGIN_LOG_SEV_INFO);
+
     if (!in || !in->tables)
     {
         *rc = SS_PLUGIN_FAILURE;
@@ -164,6 +172,9 @@ static ss_plugin_t* plugin_init(const ss_plugin_init_input* in, ss_plugin_rc* rc
 
 static void plugin_destroy(ss_plugin_t* s)
 {
+    plugin_state *ps = (plugin_state *) s;
+    ps->log(ps->owner, NULL, "destroying plugin...", SS_PLUGIN_LOG_SEV_INFO);
+
     delete ((plugin_state *) s);
 }
 

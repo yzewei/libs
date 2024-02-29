@@ -38,6 +38,15 @@ if(POLICY CMP0042)
 	cmake_policy(SET CMP0042 NEW)
 endif()
 
+# Enable CMAKE_MSVC_RUNTIME_LIBRARY on Windows + CMake >= 3.15 and link
+# with the static (MultiThreaded) CRT unless instructed otherwise.
+if(NOT (CMAKE_MSVC_RUNTIME_LIBRARY OR BUILD_SHARED_LIBS))
+	set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+if(POLICY CMP0091)
+	cmake_policy(SET CMP0091 NEW)
+endif()
+
 if(POLICY CMP0135)
 	cmake_policy(SET CMP0135 NEW)
 endif()
@@ -50,6 +59,7 @@ option(MUSL_OPTIMIZED_BUILD "Enable if you want a musl optimized build" OFF)
 option(USE_BUNDLED_DRIVER "Use the driver/ subdirectory in the build process (only available in Linux)" ON)
 option(ENABLE_DRIVERS_TESTS "Enable driver tests (bpf, kernel module, modern bpf)" OFF)
 option(ENABLE_LIBSCAP_TESTS "Enable libscap unit tests" OFF)
+option(ENABLE_LIBSINSP_E2E_TESTS "Enable libsinsp e2e tests" OFF)
 option(BUILD_SHARED_LIBS "Build libscap and libsinsp as shared libraries" OFF)
 option(ENABLE_VM_TESTS "Enable driver sanity tests" OFF)
 
@@ -125,6 +135,12 @@ if(CREATE_TEST_TARGETS)
 
 	if(ENABLE_LIBSCAP_TESTS)
 		add_subdirectory(test/libscap)
+	endif()
+
+	if(ENABLE_LIBSINSP_E2E_TESTS)
+		message(WARNING "LIBSINSP_E2E_TESTS are experimental!")
+		add_subdirectory(test/libsinsp_e2e)
+		add_subdirectory(test/libsinsp_e2e/resources)
 	endif()
 
 	if(ENABLE_VM_TESTS)

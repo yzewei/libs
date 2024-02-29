@@ -397,7 +397,14 @@ static __always_inline void auxmap__store_execve_args(struct auxiliary_map *auxm
 		total_len += arg_len;
 	}
 	/* the sum of all env variables lengths should be `<= MAX_PROC_ARG_ENV` */
-	total_len = total_len & (MAX_PROC_ARG_ENV - 1);
+	if(total_len >= MAX_PROC_ARG_ENV)
+	{
+		total_len = MAX_PROC_ARG_ENV;
+	}
+	else
+	{
+		total_len = total_len & (MAX_PROC_ARG_ENV - 1);
+	}
 	auxmap->payload_pos = initial_payload_pos + total_len;
 	push__param_len(auxmap->data, &auxmap->lengths_pos, total_len);
 }
@@ -559,8 +566,9 @@ static __always_inline void auxmap__store_sockaddr_param(struct auxiliary_map *a
  * @param auxmap pointer to the auxmap in which we are storing the param.
  * @param socket_fd socket from which we extract information about the tuple.
  * @param direction specifies the connection direction.
+ * @param usrsockaddr pointer to user provided sock address.
  */
-static __always_inline void auxmap__store_socktuple_param(struct auxiliary_map *auxmap, uint32_t socket_fd, int direction)
+static __always_inline void auxmap__store_socktuple_param(struct auxiliary_map *auxmap, uint32_t socket_fd, int direction, struct sockaddr *usrsockaddr)
 {
 	uint16_t final_param_len = 0;
 
@@ -586,6 +594,16 @@ static __always_inline void auxmap__store_socktuple_param(struct auxiliary_map *
 		BPF_CORE_READ_INTO(&port_local, inet, inet_sport);
 		BPF_CORE_READ_INTO(&ipv4_remote, sk, __sk_common.skc_daddr);
 		BPF_CORE_READ_INTO(&port_remote, sk, __sk_common.skc_dport);
+
+		/* Kernel doesn't always fill sk->__sk_common in sendto and sendmsg syscalls (as in the case of an UDP connection).
+		 * We fallback to the address from userspace when the kernel-provided address is NULL */ 
+		if (port_remote == 0 && usrsockaddr != NULL)
+		{
+			struct sockaddr_in usrsockaddr_in = {};
+			bpf_probe_read_user(&usrsockaddr_in, bpf_core_type_size(struct sockaddr_in), (void *)usrsockaddr);
+			ipv4_remote = usrsockaddr_in.sin_addr.s_addr;
+			port_remote = usrsockaddr_in.sin_port;
+		}
 
 		/* Pack the tuple info:
 		 * - socket family
@@ -629,6 +647,16 @@ static __always_inline void auxmap__store_socktuple_param(struct auxiliary_map *
 		BPF_CORE_READ_INTO(&ipv6_remote, sk, __sk_common.skc_v6_daddr);
 		BPF_CORE_READ_INTO(&port_remote, sk, __sk_common.skc_dport);
 
+		/* Kernel doesn't always fill sk->__sk_common in sendto and sendmsg syscalls (as in the case of an UDP connection).
+		 * We fallback to the address from userspace when the kernel-provided address is NULL */ 
+		if (port_remote == 0 && usrsockaddr != NULL)
+		{
+			struct sockaddr_in6 usrsockaddr_in6 = {};
+			bpf_probe_read_user(&usrsockaddr_in6, bpf_core_type_size(struct sockaddr_in6), (void *)usrsockaddr);
+			bpf_probe_read_kernel(&ipv6_remote, sizeof(uint32_t)*4, usrsockaddr_in6.sin6_addr.in6_u.u6_addr32);
+			port_remote = usrsockaddr_in6.sin6_port;
+		}
+		
 		/* Pack the tuple info:
 		 * - socket family
 		 * - src_ipv6

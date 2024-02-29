@@ -15,10 +15,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 */
-#include "logger.h"
-#include "sinsp.h"
-#include "sinsp_int.h"
-#include "strl.h"
+#include <libsinsp/logger.h>
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
+#include <libscap/strl.h>
 
 #ifndef _WIN32
 #include <sys/time.h>
@@ -36,15 +36,11 @@ const size_t ENCODE_LEN = sizeof(uint64_t);
 
 } // end namespace
 
-sinsp_logger* sinsp_logger::s_logger = nullptr;
+sinsp_logger sinsp_logger::s_logger;
 
 sinsp_logger* sinsp_logger::instance()
 {
-	if(s_logger == nullptr)
-	{
-		s_logger = new sinsp_logger();
-	}
-	return s_logger;
+	return &s_logger;
 }
 
 const uint32_t sinsp_logger::OT_NONE       = 0;
@@ -135,7 +131,7 @@ void sinsp_logger::remove_callback_log()
 
 void sinsp_logger::set_severity(const severity sev)
 {
-	if(m_sev < SEV_MIN || m_sev > SEV_MAX)
+	if(sev < SEV_MIN || sev > SEV_MAX)
 	{
 		throw sinsp_exception("Invalid log severity");
 	}

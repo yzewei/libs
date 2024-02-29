@@ -17,17 +17,12 @@ limitations under the License.
 */
 
 #pragma once
+
 //
 // Memory storage size for an entry in the event storage LIFO.
 // Events bigger than SP_EVT_BUF_SIZE won't be be stored in the LIFO.
 //
 #define SP_EVT_BUF_SIZE 4096
-
-//
-// Controls if assertions break execution or if they are just printed to the
-// log
-//
-#define ASSERT_TO_LOG
 
 //
 // Max size that the FD table of a process can reach
@@ -50,11 +45,6 @@ limitations under the License.
 #define DEFAULT_SNAPLEN 80
 
 //
-// Maximum user event buffer size
-//
-#define MAX_USER_EVT_BUFFER 65536
-
-//
 // The time after which a clone should be considered stale
 //
 #define CLONE_STALE_TIME_NS 2 * SECOND_TO_NS
@@ -64,12 +54,3 @@ limitations under the License.
 //
 #define DEFAULT_INCREASE_SNAPLEN_PORT_RANGE {0, 0}
 
-//
-// FD class customized with the storage we need
-//
-#ifdef HAS_ANALYZER
-#include "analyzer_settings.h"
-#else
-template<class T> class sinsp_fdinfo;
-typedef sinsp_fdinfo<int> sinsp_fdinfo_t;
-#endif // HAS_ANALYZER

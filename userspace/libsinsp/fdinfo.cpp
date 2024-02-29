@@ -20,49 +20,11 @@ limitations under the License.
 #include <inttypes.h>
 #include <algorithm>
 #endif
-#include "sinsp.h"
-#include "sinsp_int.h"
-#include "scap-int.h"
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
+#include <libscap/scap-int.h>
 
-///////////////////////////////////////////////////////////////////////////////
-// sinsp_fdinfo implementation
-///////////////////////////////////////////////////////////////////////////////
-template<> sinsp_fdinfo_t::sinsp_fdinfo()
-{
-	m_type = SCAP_FD_UNINITIALIZED;
-	m_flags = FLAGS_NONE;
-	m_usrstate = NULL;
-	m_name = "";
-	m_name_raw = "";
-	m_oldname = "";
-	m_dev = 0;
-	m_mount_id = 0;
-	m_ino = 0;
-	m_openflags = 0;
-	m_pid = 0;
-}
-
-template<> void sinsp_fdinfo_t::reset()
-{
-	m_type = SCAP_FD_UNINITIALIZED;
-	m_flags = FLAGS_NONE;
-	m_usrstate = NULL;
-	m_name = "";
-	m_name_raw = "";
-	m_oldname = "";
-	m_dev = 0;
-	m_mount_id = 0;
-	m_ino = 0;
-	m_openflags = 0;
-	m_pid = 0;
-}
-
-template<> std::string* sinsp_fdinfo_t::tostring()
-{
-	return &m_name;
-}
-
-template<> char sinsp_fdinfo_t::get_typechar()
+char sinsp_fdinfo::get_typechar() const
 {
 	switch(m_type)
 	{
@@ -115,73 +77,73 @@ template<> char sinsp_fdinfo_t::get_typechar()
 	}
 }
 
-template<> char* sinsp_fdinfo_t::get_typestring() const
+const char* sinsp_fdinfo::get_typestring() const
 {
 	switch(m_type)
 	{
 	case SCAP_FD_FILE_V2:
 	case SCAP_FD_FILE:
-		return (char*)"file";
+		return "file";
 	case SCAP_FD_DIRECTORY:
-		return (char*)"directory";
+		return "directory";
 	case SCAP_FD_IPV4_SOCK:
 	case SCAP_FD_IPV4_SERVSOCK:
-		return (char*)"ipv4";
+		return "ipv4";
 	case SCAP_FD_IPV6_SOCK:
 	case SCAP_FD_IPV6_SERVSOCK:
-		return (char*)"ipv6";
+		return "ipv6";
 	case SCAP_FD_UNIX_SOCK:
-		return (char*)"unix";
+		return "unix";
 	case SCAP_FD_FIFO:
-		return (char*)"pipe";
+		return "pipe";
 	case SCAP_FD_EVENT:
-		return (char*)"event";
+		return "event";
 	case SCAP_FD_SIGNALFD:
-		return (char*)"signalfd";
+		return "signalfd";
 	case SCAP_FD_EVENTPOLL:
-		return (char*)"eventpoll";
+		return "eventpoll";
 	case SCAP_FD_INOTIFY:
-		return (char*)"inotify";
+		return "inotify";
 	case SCAP_FD_TIMERFD:
-		return (char*)"timerfd";
+		return "timerfd";
 	case SCAP_FD_NETLINK:
-		return (char*)"netlink";
+		return "netlink";
 	case SCAP_FD_BPF:
-		return (char*)"bpf";
+		return "bpf";
 	case SCAP_FD_USERFAULTFD:
-		return (char*)"userfaultfd";
+		return "userfaultfd";
 	case SCAP_FD_IOURING:
-		return (char*)"io_uring";
+		return "io_uring";
 	case SCAP_FD_MEMFD:
-		return (char*)"memfd";	
+		return "memfd";
 	case SCAP_FD_PIDFD:
-		return (char*)"pidfd";
+		return "pidfd";
 	default:
-		return (char*)"<NA>";
+		return "<NA>";
 	}
 }
 
-template<> std::string sinsp_fdinfo_t::tostring_clean()
+std::string sinsp_fdinfo::tostring_clean() const
 {
-	std::string m_tstr = m_name;
-	sanitize_string(m_tstr);
+	std::string tstr = m_name;
+	sanitize_string(tstr);
 
-	return m_tstr;
+	return tstr;
 }
 
-template<> void sinsp_fdinfo_t::add_filename_raw(const char* rawpath)
+void sinsp_fdinfo::add_filename_raw(std::string_view rawpath)
 {
-	m_name_raw = rawpath;
+	m_name_raw = std::string(rawpath);
 }
 
-template<> void sinsp_fdinfo_t::add_filename(const char* fullpath)
+void sinsp_fdinfo::add_filename(std::string_view fullpath)
 {
-	m_name = fullpath;
+	m_name = std::string(fullpath);
 }
 
-template<> bool sinsp_fdinfo_t::set_net_role_by_guessing(sinsp* inspector,
+bool sinsp_fdinfo::set_net_role_by_guessing(sinsp* inspector,
 										  sinsp_threadinfo* ptinfo,
-										  sinsp_fdinfo_t* pfdinfo,
+										  sinsp_fdinfo* pfdinfo,
 										  bool incoming)
 {
 	//
@@ -204,7 +166,7 @@ template<> bool sinsp_fdinfo_t::set_net_role_by_guessing(sinsp* inspector,
 	}
 
 wildass_guess:
-	if(!(pfdinfo->m_flags & (sinsp_fdinfo_t::FLAGS_ROLE_CLIENT | sinsp_fdinfo_t::FLAGS_ROLE_SERVER)))
+	if(!(pfdinfo->m_flags & (sinsp_fdinfo::FLAGS_ROLE_CLIENT | sinsp_fdinfo::FLAGS_ROLE_SERVER)))
 	{
 		//
 		// We just assume that a server usually starts with a read and a client with a write
@@ -222,7 +184,7 @@ wildass_guess:
 	return true;
 }
 
-template<> scap_l4_proto sinsp_fdinfo_t::get_l4proto()
+scap_l4_proto sinsp_fdinfo::get_l4proto() const
 {
 	scap_fd_type evt_type = m_type;
 
@@ -273,54 +235,53 @@ template<> scap_l4_proto sinsp_fdinfo_t::get_l4proto()
 ///////////////////////////////////////////////////////////////////////////////
 sinsp_fdtable::sinsp_fdtable(sinsp* inspector)
 {
+	m_tid = 0;
 	m_inspector = inspector;
 	reset_cache();
 }
 
-sinsp_fdinfo_t* sinsp_fdtable::find(int64_t fd)
+sinsp_fdinfo* sinsp_fdtable::find(int64_t fd)
 {
-	std::unordered_map<int64_t, sinsp_fdinfo_t>::iterator fdit;
-
-		//
-		// Try looking up in our simple cache
-		//
-		if(m_last_accessed_fd != -1 && fd == m_last_accessed_fd)
+	//
+	// Try looking up in our simple cache
+	//
+	if(m_last_accessed_fd != -1 && fd == m_last_accessed_fd)
+	{
+		if (m_inspector != nullptr && m_inspector->get_sinsp_stats_v2())
 		{
-			if (m_inspector != nullptr && m_inspector->m_sinsp_stats_v2)
-			{
-				m_inspector->m_sinsp_stats_v2->m_n_cached_fd_lookups++;
-			}
-			return m_last_accessed_fdinfo;
+			m_inspector->get_sinsp_stats_v2()->m_n_cached_fd_lookups++;
+		}
+		return m_last_accessed_fdinfo;
+	}
+
+	//
+	// Caching failed, do a real lookup
+	//
+	auto fdit = m_table.find(fd);
+
+	if(fdit == m_table.end())
+	{
+		if (m_inspector != nullptr && m_inspector->get_sinsp_stats_v2())
+		{
+			m_inspector->get_sinsp_stats_v2()->m_n_failed_fd_lookups++;
+		}
+		return NULL;
+	}
+	else
+	{
+		if (m_inspector != nullptr && m_inspector->get_sinsp_stats_v2())
+		{
+			m_inspector->get_sinsp_stats_v2()->m_n_noncached_fd_lookups++;
 		}
 
-		//
-		// Caching failed, do a real lookup
-		//
-		fdit = m_table.find(fd);
-
-		if(fdit == m_table.end())
-		{
-			if (m_inspector != nullptr && m_inspector->m_sinsp_stats_v2)
-			{
-				m_inspector->m_sinsp_stats_v2->m_n_failed_fd_lookups++;
-			}
-			return NULL;
-		}
-		else
-		{
-			if (m_inspector != nullptr && m_inspector->m_sinsp_stats_v2)
-			{
-				m_inspector->m_sinsp_stats_v2->m_n_noncached_fd_lookups++;
-			}
-
-			m_last_accessed_fd = fd;
-			m_last_accessed_fdinfo = &(fdit->second);
-			lookup_device(&(fdit->second), fd);
-			return &(fdit->second);
-		}
+		m_last_accessed_fd = fd;
+		m_last_accessed_fdinfo = fdit->second.get();
+		lookup_device(m_last_accessed_fdinfo, fd);
+		return m_last_accessed_fdinfo;
+	}
 }
 
-sinsp_fdinfo_t* sinsp_fdtable::add(int64_t fd, sinsp_fdinfo_t* fdinfo)
+sinsp_fdinfo* sinsp_fdtable::add(int64_t fd, std::unique_ptr<sinsp_fdinfo> fdinfo)
 {
 	//
 	// Look for the FD in the table
@@ -340,13 +301,12 @@ sinsp_fdinfo_t* sinsp_fdtable::add(int64_t fd, sinsp_fdinfo_t* fdinfo)
 			// No entry in the table, this is the normal case
 			//
 			m_last_accessed_fd = -1;
-			if (m_inspector != nullptr && m_inspector->m_sinsp_stats_v2)
+			if (m_inspector != nullptr && m_inspector->get_sinsp_stats_v2())
 			{
-				m_inspector->m_sinsp_stats_v2->m_n_added_fds++;
+				m_inspector->get_sinsp_stats_v2()->m_n_added_fds++;
 			}
 
-			std::pair<std::unordered_map<int64_t, sinsp_fdinfo_t>::iterator, bool> insert_res = m_table.emplace(fd, *fdinfo);
-			return &(insert_res.first->second);
+			return m_table.emplace(fd, std::move(fdinfo)).first->second.get();
 		}
 		else
 		{
@@ -358,7 +318,7 @@ sinsp_fdinfo_t* sinsp_fdtable::add(int64_t fd, sinsp_fdinfo_t* fdinfo)
 		//
 		// the fd is already in the table.
 		//
-		if(it->second.m_flags & sinsp_fdinfo_t::FLAGS_CLOSE_IN_PROGRESS)
+		if(it->second->m_flags & sinsp_fdinfo::FLAGS_CLOSE_IN_PROGRESS)
 		{
 			//
 			// Sometimes an FD-creating syscall can be called on an FD that is being closed (i.e
@@ -366,10 +326,10 @@ sinsp_fdinfo_t* sinsp_fdtable::add(int64_t fd, sinsp_fdinfo_t* fdinfo)
 			// If this is the case, mark the new entry so that the successive close exit won't
 			// destroy it.
 			//
-			fdinfo->m_flags &= ~sinsp_fdinfo_t::FLAGS_CLOSE_IN_PROGRESS;
-			fdinfo->m_flags |= sinsp_fdinfo_t::FLAGS_CLOSE_CANCELED;
+			fdinfo->m_flags &= ~sinsp_fdinfo::FLAGS_CLOSE_IN_PROGRESS;
+			fdinfo->m_flags |= sinsp_fdinfo::FLAGS_CLOSE_CANCELED;
 
-			m_table[CANCELED_FD_NUMBER] = it->second;
+			m_table[CANCELED_FD_NUMBER] = it->second->clone();
 		}
 		else
 		{
@@ -389,14 +349,15 @@ sinsp_fdinfo_t* sinsp_fdtable::add(int64_t fd, sinsp_fdinfo_t* fdinfo)
 		//
 		// Replace the fd as a struct copy
 		//
-		it->second.copy(*fdinfo, true);
-		return &(it->second);
+		m_last_accessed_fd = -1;
+		it->second = std::move(fdinfo);
+		return it->second.get();
 	}
 }
 
-void sinsp_fdtable::erase(int64_t fd)
+bool sinsp_fdtable::erase(int64_t fd)
 {
-	std::unordered_map<int64_t, sinsp_fdinfo_t>::iterator fdit = m_table.find(fd);
+	auto fdit = m_table.find(fd);
 
 	if(fd == m_last_accessed_fd)
 	{
@@ -412,19 +373,21 @@ void sinsp_fdtable::erase(int64_t fd)
 		// keep going.
 		//
 		ASSERT(false);
-		if (m_inspector != nullptr && m_inspector->m_sinsp_stats_v2)
+		if (m_inspector != nullptr && m_inspector->get_sinsp_stats_v2())
 		{
-			m_inspector->m_sinsp_stats_v2->m_n_failed_fd_lookups++;
+			m_inspector->get_sinsp_stats_v2()->m_n_failed_fd_lookups++;
 		}
+		return false;
 	}
 	else
 	{
 		m_table.erase(fdit);
-		if (m_inspector != nullptr && m_inspector->m_sinsp_stats_v2)
+		if (m_inspector != nullptr && m_inspector->get_sinsp_stats_v2())
 		{
-			m_inspector->m_sinsp_stats_v2->m_n_noncached_fd_lookups++;
-			m_inspector->m_sinsp_stats_v2->m_n_removed_fds++;
+			m_inspector->get_sinsp_stats_v2()->m_n_noncached_fd_lookups++;
+			m_inspector->get_sinsp_stats_v2()->m_n_removed_fds++;
 		}
+		return true;
 	}
 }
 
@@ -433,7 +396,7 @@ void sinsp_fdtable::clear()
 	m_table.clear();
 }
 
-size_t sinsp_fdtable::size()
+size_t sinsp_fdtable::size() const
 {
 	return m_table.size();
 }
@@ -443,9 +406,8 @@ void sinsp_fdtable::reset_cache()
 	m_last_accessed_fd = -1;
 }
 
-void sinsp_fdtable::lookup_device(sinsp_fdinfo_t* fdi, uint64_t fd)
+void sinsp_fdtable::lookup_device(sinsp_fdinfo* fdi, uint64_t fd)
 {
-#ifdef HAS_CAPTURE
 #ifndef _WIN32
 	if(m_inspector == nullptr || m_inspector->is_offline() ||
 	   (m_inspector->is_plugin() && !m_inspector->is_syscall_plugin()))
@@ -453,7 +415,7 @@ void sinsp_fdtable::lookup_device(sinsp_fdinfo_t* fdi, uint64_t fd)
 		return;
 	}
 
-	if(fdi->is_file() && fdi->m_dev == 0 && fdi->m_mount_id != 0)
+	if(m_tid != 0 && m_tid != (uint64_t)-1 && fdi->is_file() && fdi->m_dev == 0 && fdi->m_mount_id != 0)
 	{
 		char procdir[SCAP_MAX_PATH_SIZE];
 		snprintf(procdir, sizeof(procdir), "%s/proc/%ld/", scap_get_host_root(), m_tid);
@@ -461,5 +423,4 @@ void sinsp_fdtable::lookup_device(sinsp_fdinfo_t* fdi, uint64_t fd)
 		fdi->m_mount_id = 0; // don't try again
 	}
 #endif // _WIN32
-#endif // HAS_CAPTURE
 }

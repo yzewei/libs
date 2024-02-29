@@ -20,7 +20,8 @@ limitations under the License.
 #include <cstdlib>
 #include <sstream>
 
-#include <ppm_events_public.h>
+#include <driver/ppm_events_public.h>
+#include <scap.h>
 
 #include "test_plugins.h"
 
@@ -29,19 +30,21 @@ static constexpr const char* s_evt_data = "hello world";
 /**
  * Example of plugin implementing only the event sourcing capability, which:
  * - Implements a specific event source "sample"
- * - Sources plugin events containing a sample string 
+ * - Sources plugin events containing a sample string
  */
-typedef struct plugin_state
+struct plugin_state
 {
     std::string lasterr;
-} plugin_state;
+    ss_plugin_owner_t* owner;
+    ss_plugin_log_fn_t log;
+};
 
-typedef struct instance_state
+struct instance_state
 {
     uint64_t count;
     uint8_t evt_buf[2048];
     ss_plugin_event* evt;
-} instance_state;
+};
 
 static const char* plugin_get_required_api_version()
 {
@@ -85,12 +88,23 @@ static const char* plugin_get_last_error(ss_plugin_t* s)
 
 static ss_plugin_t* plugin_init(const ss_plugin_init_input* in, ss_plugin_rc* rc)
 {
+    plugin_state *ret = new plugin_state();
+
+    //save logger and owner in the state
+    ret->log = in->log_fn;
+    ret->owner = in->owner;
+
+    ret->log(ret->owner, NULL, "initializing plugin...", SS_PLUGIN_LOG_SEV_INFO);
+
     *rc = SS_PLUGIN_SUCCESS;
-    return new plugin_state();
+    return ret;
 }
 
 static void plugin_destroy(ss_plugin_t* s)
 {
+    plugin_state *ps = (plugin_state *) s;
+    ps->log(ps->owner, NULL, "destroying plugin...", SS_PLUGIN_LOG_SEV_INFO);
+    
     delete ((plugin_state *) s);
 }
 
@@ -126,27 +140,21 @@ static ss_plugin_rc plugin_next_batch(ss_plugin_t* s, ss_instance_t* i, uint32_t
 
     *nevts = 1;
     *evts = &istate->evt;
-    istate->evt->type = PPME_PLUGINEVENT_E;
+
+    char error[SCAP_LASTERR_SIZE];
+
+    int32_t encode_res = scap_event_encode_params(scap_sized_buffer{istate->evt, sizeof(istate->evt_buf)},
+        nullptr, error, PPME_PLUGINEVENT_E, 2,
+        plugin_get_id(), scap_sized_buffer{(void*) s_evt_data, strlen(s_evt_data) + 1});
+
+    if (encode_res == SCAP_FAILURE)
+    {
+        return SS_PLUGIN_FAILURE;
+    }
+
     istate->evt->tid = -1;
     istate->evt->ts = UINT64_MAX;
-    istate->evt->len = sizeof(ss_plugin_event);
-    istate->evt->nparams = 2;
 
-    uint8_t* parambuf = &istate->evt_buf[0] + sizeof(ss_plugin_event);
-
-    // lenghts
-    *((uint32_t*) parambuf) = sizeof(uint32_t);
-    parambuf += sizeof(uint32_t);
-    *((uint32_t*) parambuf) = strlen(s_evt_data) + 1;
-    parambuf += sizeof(uint32_t);
-
-    // params
-    *((uint32_t*) parambuf) = plugin_get_id();
-    parambuf += sizeof(uint32_t);
-    strcpy((char*) parambuf, s_evt_data);
-    parambuf += strlen(s_evt_data) + 1;
-
-    istate->evt->len += parambuf - (&istate->evt_buf[0] + sizeof(ss_plugin_event));
     istate->count--;
     return SS_PLUGIN_SUCCESS;
 }

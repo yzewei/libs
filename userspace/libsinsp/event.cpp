@@ -16,7 +16,7 @@ limitations under the License.
 
 */
 
-#include "sinsp_errno.h"
+#include <libsinsp/sinsp_errno.h>
 
 #ifndef _WIN32
 #include <inttypes.h>
@@ -34,11 +34,11 @@ limitations under the License.
 #include <functional>
 #include <filesystem>
 
-#include "sinsp.h"
-#include "sinsp_int.h"
-#include "strl.h"
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
+#include <libscap/strl.h>
 
-#include "scap.h"
+#include <libscap/scap.h>
 
 extern sinsp_evttables g_infotables;
 
@@ -71,7 +71,6 @@ extern sinsp_evttables g_infotables;
 sinsp_evt::sinsp_evt() :
 		m_inspector(NULL),
 		m_pevt(NULL),
-		m_poriginal_evt(NULL),
 		m_pevt_storage(NULL),
 		m_cpuid(0),
 		m_evtnum(0),
@@ -95,7 +94,6 @@ sinsp_evt::sinsp_evt() :
 sinsp_evt::sinsp_evt(sinsp *inspector) :
 		m_inspector(inspector),
 		m_pevt(NULL),
-		m_poriginal_evt(NULL),
 		m_pevt_storage(NULL),
 		m_cpuid(0),
 		m_evtnum(0),
@@ -133,7 +131,7 @@ event_direction sinsp_evt::get_direction() const
 	return (event_direction)(m_pevt->type & PPME_DIRECTION_FLAG);
 }
 
-int64_t sinsp_evt::get_tid()
+int64_t sinsp_evt::get_tid() const
 {
 	return m_pevt->tid;
 }
@@ -143,7 +141,7 @@ void sinsp_evt::set_iosize(uint32_t size)
 	m_iosize = size;
 }
 
-uint32_t sinsp_evt::get_iosize()
+uint32_t sinsp_evt::get_iosize() const
 {
 	return m_iosize;
 }
@@ -164,7 +162,7 @@ sinsp_threadinfo* sinsp_evt::get_thread_info(bool query_os_if_not_found)
 	return m_inspector->get_thread_ref(m_pevt->tid, query_os_if_not_found, false).get();
 }
 
-int64_t sinsp_evt::get_fd_num()
+int64_t sinsp_evt::get_fd_num() const
 {
 	if(m_fdinfo)
 	{
@@ -239,7 +237,7 @@ const char *sinsp_evt::get_param_name(uint32_t id)
 	return m_info->params[id].name;
 }
 
-const struct ppm_param_info* sinsp_evt::get_param_info(uint32_t id)
+const ppm_param_info* sinsp_evt::get_param_info(uint32_t id)
 {
 	if((m_flags & sinsp_evt::SINSP_EF_PARAMS_LOADED) == 0)
 	{
@@ -252,7 +250,7 @@ const struct ppm_param_info* sinsp_evt::get_param_info(uint32_t id)
 	return &(m_info->params[id]);
 }
 
-uint32_t binary_buffer_to_hex_string(char *dst, const char *src, uint32_t dstlen, uint32_t srclen, sinsp_evt::param_fmt fmt)
+static uint32_t binary_buffer_to_hex_string(char *dst, const char *src, uint32_t dstlen, uint32_t srclen, sinsp_evt::param_fmt fmt)
 {
 	uint32_t j;
 	uint32_t k;
@@ -346,7 +344,7 @@ uint32_t binary_buffer_to_hex_string(char *dst, const char *src, uint32_t dstlen
 	}
 }
 
-uint32_t binary_buffer_to_asciionly_string(char *dst, const char *src, uint32_t dstlen, uint32_t srclen, sinsp_evt::param_fmt fmt)
+static uint32_t binary_buffer_to_asciionly_string(char *dst, const char *src, uint32_t dstlen, uint32_t srclen, sinsp_evt::param_fmt fmt)
 {
 	uint32_t j;
 	uint32_t k = 0;
@@ -403,7 +401,7 @@ uint32_t binary_buffer_to_asciionly_string(char *dst, const char *src, uint32_t 
 	return k;
 }
 
-uint32_t binary_buffer_to_string_dots(char *dst, const char *src, uint32_t dstlen, uint32_t srclen, sinsp_evt::param_fmt fmt)
+static uint32_t binary_buffer_to_string_dots(char *dst, const char *src, uint32_t dstlen, uint32_t srclen, sinsp_evt::param_fmt fmt)
 {
 	uint32_t j;
 	uint32_t k = 0;
@@ -446,7 +444,7 @@ uint32_t binary_buffer_to_string_dots(char *dst, const char *src, uint32_t dstle
 	return k;
 }
 
-uint32_t binary_buffer_to_base64_string(char *dst, const char *src, uint32_t dstlen, uint32_t srclen, sinsp_evt::param_fmt fmt)
+static uint32_t binary_buffer_to_base64_string(char *dst, const char *src, uint32_t dstlen, uint32_t srclen, sinsp_evt::param_fmt fmt)
 {
 	//
 	// base64 encoder, malloc-free version of:
@@ -493,7 +491,7 @@ uint32_t binary_buffer_to_base64_string(char *dst, const char *src, uint32_t dst
 	return enc_dstlen;
 }
 
-uint32_t binary_buffer_to_json_string(char *dst, const char *src, uint32_t dstlen, uint32_t srclen, sinsp_evt::param_fmt fmt)
+static uint32_t binary_buffer_to_json_string(char *dst, const char *src, uint32_t dstlen, uint32_t srclen, sinsp_evt::param_fmt fmt)
 {
 	uint32_t k = 0;
 	switch(fmt)
@@ -514,7 +512,7 @@ uint32_t binary_buffer_to_json_string(char *dst, const char *src, uint32_t dstle
 	return k;
 }
 
-uint32_t binary_buffer_to_string(char *dst, const char *src, uint32_t dstlen, uint32_t srclen, sinsp_evt::param_fmt fmt)
+static uint32_t binary_buffer_to_string(char *dst, const char *src, uint32_t dstlen, uint32_t srclen, sinsp_evt::param_fmt fmt)
 {
 	uint32_t k = 0;
 
@@ -557,7 +555,7 @@ uint32_t binary_buffer_to_string(char *dst, const char *src, uint32_t dstlen, ui
 	return k;
 }
 
-uint32_t strcpy_sanitized(char *dest, const char *src, uint32_t dstsize)
+static uint32_t strcpy_sanitized(char *dest, const char *src, uint32_t dstsize)
 {
 	volatile char* tmp = (volatile char *)dest;
 	uint32_t j = 0;
@@ -602,7 +600,7 @@ int sinsp_evt::render_fd_json(Json::Value *ret, int64_t fd, const char** resolve
 
 	if(fd >= 0)
 	{
-		sinsp_fdinfo_t *fdinfo = tinfo->get_fd(fd);
+		sinsp_fdinfo *fdinfo = tinfo->get_fd(fd);
 		if(fdinfo)
 		{
 			char tch = fdinfo->get_typechar();
@@ -695,7 +693,7 @@ char* sinsp_evt::render_fd(int64_t fd, const char** resolved_str, sinsp_evt::par
 
 	if(fd >= 0)
 	{
-		sinsp_fdinfo_t *fdinfo = tinfo->get_fd(fd);
+		sinsp_fdinfo *fdinfo = tinfo->get_fd(fd);
 		if(fdinfo)
 		{
 			char tch = fdinfo->get_typechar();
@@ -875,8 +873,7 @@ const char* sinsp_evt::get_param_as_str(uint32_t id, OUT const char** resolved_s
 		memcpy(&dyn_idx, param->m_val, sizeof(uint8_t));
 
 		if(dyn_idx < param_info->ninfo) {
-			const struct ppm_param_info* dyn_params =
-				(const struct ppm_param_info*)param_info->info;
+			auto dyn_params = (const ppm_param_info*)param_info->info;
 
 			dyn_param = sinsp_evt_param(param->m_evt, param->m_idx,
 				param->m_val + sizeof(uint8_t), param->m_len - sizeof(uint8_t));
@@ -1077,11 +1074,11 @@ const char* sinsp_evt::get_param_as_str(uint32_t id, OUT const char** resolved_s
 			}
 
 			ASSERT(m_inspector != NULL);
-			if(m_inspector->m_max_evt_output_len != 0 &&
-				blen > m_inspector->m_max_evt_output_len &&
+			if(m_inspector->get_max_evt_output_len() != 0 &&
+				blen > m_inspector->get_max_evt_output_len() &&
 				fmt == PF_NORMAL)
 			{
-				uint32_t real_len = std::min(blen, m_inspector->m_max_evt_output_len);
+				uint32_t real_len = std::min(blen, m_inspector->get_max_evt_output_len());
 
 				m_rawbuf_str_len = real_len;
 				if(real_len > 3)
@@ -1126,7 +1123,7 @@ const char* sinsp_evt::get_param_as_str(uint32_t id, OUT const char** resolved_s
 				memcpy(&addr.m_ip, param->m_val + 1, sizeof(addr.m_ip));
 				memcpy(&addr.m_port, param->m_val + 5, sizeof(addr.m_port));
 				addr.m_l4proto = (m_fdinfo != NULL) ? m_fdinfo->get_l4proto() : SCAP_L4_UNKNOWN;
-				std::string straddr = ipv4serveraddr_to_string(&addr, m_inspector->m_hostname_and_port_resolution_enabled);
+				std::string straddr = ipv4serveraddr_to_string(&addr, m_inspector->is_hostname_and_port_resolution_enabled());
 				snprintf(&m_paramstr_storage[0],
 					   	 m_paramstr_storage.size(),
 					   	 "%s",
@@ -1148,7 +1145,7 @@ const char* sinsp_evt::get_param_as_str(uint32_t id, OUT const char** resolved_s
 				memcpy((uint8_t *) addr.m_ip.m_b, (uint8_t *) param->m_val + 1, sizeof(addr.m_ip.m_b));
 				memcpy(&addr.m_port, param->m_val + 17, sizeof(addr.m_port));
 				addr.m_l4proto = (m_fdinfo != NULL) ? m_fdinfo->get_l4proto() : SCAP_L4_UNKNOWN;
-				std::string straddr = ipv6serveraddr_to_string(&addr, m_inspector->m_hostname_and_port_resolution_enabled);
+				std::string straddr = ipv6serveraddr_to_string(&addr, m_inspector->is_hostname_and_port_resolution_enabled());
 				snprintf(&m_paramstr_storage[0],
 					   	 m_paramstr_storage.size(),
 					   	 "%s",
@@ -1181,7 +1178,7 @@ const char* sinsp_evt::get_param_as_str(uint32_t id, OUT const char** resolved_s
 				memcpy(&addr.m_fields.m_dip, param->m_val + 7, sizeof(uint32_t));
 				memcpy(&addr.m_fields.m_dport, param->m_val + 11, sizeof(uint16_t));
 				addr.m_fields.m_l4proto = (m_fdinfo != NULL) ? m_fdinfo->get_l4proto() : SCAP_L4_UNKNOWN;
-				std::string straddr = ipv4tuple_to_string(&addr, m_inspector->m_hostname_and_port_resolution_enabled);
+				std::string straddr = ipv4tuple_to_string(&addr, m_inspector->is_hostname_and_port_resolution_enabled());
 				snprintf(&m_paramstr_storage[0],
 					   	 m_paramstr_storage.size(),
 					   	 "%s",
@@ -1212,7 +1209,7 @@ const char* sinsp_evt::get_param_as_str(uint32_t id, OUT const char** resolved_s
 					memcpy(&addr.m_fields.m_dip, dip, sizeof(uint32_t));
 					memcpy(&addr.m_fields.m_dport, param->m_val + 35, sizeof(uint16_t));
 					addr.m_fields.m_l4proto = (m_fdinfo != NULL) ? m_fdinfo->get_l4proto() : SCAP_L4_UNKNOWN;
-					std::string straddr = ipv4tuple_to_string(&addr, m_inspector->m_hostname_and_port_resolution_enabled);
+					std::string straddr = ipv4tuple_to_string(&addr, m_inspector->is_hostname_and_port_resolution_enabled());
 
 					snprintf(&m_paramstr_storage[0],
 							 m_paramstr_storage.size(),
@@ -1234,9 +1231,9 @@ const char* sinsp_evt::get_param_as_str(uint32_t id, OUT const char** resolved_s
 								 m_paramstr_storage.size(),
 								 "%s:%s->%s:%s",
 								 srcstr,
-								 port_to_string(srcport, (m_fdinfo != NULL) ? m_fdinfo->get_l4proto() : SCAP_L4_UNKNOWN, m_inspector->m_hostname_and_port_resolution_enabled).c_str(),
+								 port_to_string(srcport, (m_fdinfo != NULL) ? m_fdinfo->get_l4proto() : SCAP_L4_UNKNOWN, m_inspector->is_hostname_and_port_resolution_enabled()).c_str(),
 								 dststr,
-								 port_to_string(dstport, (m_fdinfo != NULL) ? m_fdinfo->get_l4proto() : SCAP_L4_UNKNOWN, m_inspector->m_hostname_and_port_resolution_enabled).c_str());
+								 port_to_string(dstport, (m_fdinfo != NULL) ? m_fdinfo->get_l4proto() : SCAP_L4_UNKNOWN, m_inspector->is_hostname_and_port_resolution_enabled()).c_str());
 						break;
 					}
 				}
@@ -1296,7 +1293,7 @@ const char* sinsp_evt::get_param_as_str(uint32_t id, OUT const char** resolved_s
 				int64_t fd = 0;
 				memcpy(&fd, param->m_val + pos, sizeof(uint64_t));
 
-				sinsp_fdinfo_t *fdinfo = tinfo->get_fd(fd);
+				sinsp_fdinfo *fdinfo = tinfo->get_fd(fd);
 				if(fdinfo)
 				{
 					tch = fdinfo->get_typechar();
@@ -1426,7 +1423,7 @@ const char* sinsp_evt::get_param_as_str(uint32_t id, OUT const char** resolved_s
 				     m_paramstr_storage.size(),
 				     "%" PRIu32, val);
 
-			const struct ppm_name_value *flags = (const struct ppm_name_value *)m_info->params[id].info;
+			auto flags = (const ppm_name_value*)m_info->params[id].info;
 			const bool exact_match = param_info->type == PT_ENUMFLAGS8 || param_info->type == PT_ENUMFLAGS16 || param_info->type == PT_ENUMFLAGS32;
 			const char *separator = "";
 			uint32_t initial_val = val;
@@ -1488,7 +1485,7 @@ const char* sinsp_evt::get_param_as_str(uint32_t id, OUT const char** resolved_s
 					m_paramstr_storage.size(),
 					prfmt, val);
 
-			const struct ppm_name_value *mode = (const struct ppm_name_value *)m_info->params[id].info;
+			auto mode = (const ppm_name_value*)m_info->params[id].info;
 			const char *separator = "";
 			uint32_t initial_val = val;
 			uint32_t j = 0;
@@ -1877,7 +1874,7 @@ const char* sinsp_evt::get_param_value_str(const char* name, OUT const char** re
 	return NULL;
 }
 
-void sinsp_evt::get_category(OUT sinsp_evt::category* cat)
+void sinsp_evt::get_category(OUT sinsp_evt::category* cat) const
 {
 	/* We always search the category inside the event table */
 	cat->m_category = get_category();
@@ -1946,19 +1943,19 @@ void sinsp_evt::get_category(OUT sinsp_evt::category* cat)
 	}
 }
 
-bool sinsp_evt::is_filtered_out()
+bool sinsp_evt::is_filtered_out() const
 {
 	return m_filtered_out;
 }
 
-scap_dump_flags sinsp_evt::get_dump_flags(OUT bool* should_drop)
+scap_dump_flags sinsp_evt::get_dump_flags(OUT bool* should_drop) const
 {
 	uint32_t dflags = SCAP_DF_NONE;
 	*should_drop = false;
 
 	if(m_filtered_out)
 	{
-		if(m_inspector->m_isfatfile_enabled)
+		if(m_inspector->is_fatfile_enabled())
 		{
 			ppm_event_flags eflags = get_info_flags();
 
@@ -2048,7 +2045,6 @@ uint64_t sinsp_evt::get_lastevent_ts() const
 bool sinsp_evt::clone_event(sinsp_evt &dest, const sinsp_evt &src)
 {
 	dest.m_inspector = src.m_inspector;
-	dest.m_poriginal_evt = nullptr;
 
 	// tinfo
 	if (src.m_tinfo_ref && src.m_tinfo && src.m_tinfo_ref.get() != src.m_tinfo)
@@ -2080,8 +2076,8 @@ bool sinsp_evt::clone_event(sinsp_evt &dest, const sinsp_evt &src)
 
 	if (src.m_pevt != nullptr)
 	{
-		dest.m_pevt_storage = new char[src.m_pevt->len];
-		memcpy(dest.m_pevt_storage, src.m_pevt, src.m_pevt->len);
+		dest.m_pevt_storage = new char[src.get_scap_evt()->len];
+		memcpy(dest.m_pevt_storage, src.m_pevt, src.get_scap_evt()->len);
 		dest.m_pevt = (scap_evt *) dest.m_pevt_storage;
 	}
 	else
@@ -2112,11 +2108,12 @@ bool sinsp_evt::clone_event(sinsp_evt &dest, const sinsp_evt &src)
 
 	// fd info
 	dest.m_fdinfo = nullptr;
+	dest.m_fdinfo_ref.reset();
 	if (src.m_fdinfo != nullptr)
 	{
 		//m_fdinfo_ref is only used to keep a handle to this
 		// copy of the fdinfo which was copied from the global fdinfo table
-		dest.m_fdinfo_ref.reset(new sinsp_fdinfo_t(*src.m_fdinfo));
+		dest.m_fdinfo_ref = src.m_fdinfo->clone();
 		dest.m_fdinfo = dest.m_fdinfo_ref.get();
 	}
 	dest.m_fdinfo_name_changed = src.m_fdinfo_name_changed;
@@ -2167,23 +2164,21 @@ void sinsp_evt::save_enter_event_params(sinsp_evt* enter_evt)
 	}
 }
 
-std::optional<std::reference_wrapper<std::string>> sinsp_evt::get_enter_evt_param(const std::string& param)
+std::optional<std::reference_wrapper<const std::string>> sinsp_evt::get_enter_evt_param(const std::string& param) const
 {
-	std::optional<std::reference_wrapper<std::string>> ret;
-
 	auto it = m_enter_path_param.find(param);
 
 	if(it != m_enter_path_param.end())
 	{
-		ret = it->second;
+		return it->second;
 	}
 
-	return ret;
+	return std::nullopt;
 }
 
 void sinsp_evt_param::throw_invalid_len_error(size_t requested_length) const
 {
-	const struct ppm_param_info* parinfo = get_info();
+	const ppm_param_info* parinfo = get_info();
 
 	std::stringstream ss;
 	ss << "could not parse param " << m_idx << " (" << parinfo->name << ") for event "
@@ -2193,7 +2188,7 @@ void sinsp_evt_param::throw_invalid_len_error(size_t requested_length) const
 	throw sinsp_exception(ss.str());
 }
 
-const struct ppm_param_info* sinsp_evt_param::get_info() const
+const ppm_param_info* sinsp_evt_param::get_info() const
 {
 	return &(m_evt->get_info()->params[m_idx]);
 }

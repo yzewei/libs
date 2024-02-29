@@ -15,12 +15,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 */
-#include "sinsp_suppress.h"
+#include <libsinsp/sinsp_suppress.h>
 
-#include "sinsp_exception.h"
-#include "../../driver/ppm_events_public.h"
-#include "scap_const.h"
-#include "scap_assert.h"
+#include <libsinsp/sinsp_exception.h>
+#include <driver/ppm_events_public.h>
+#include <libscap/scap_const.h>
+#include <libscap/scap_assert.h>
 
 void libsinsp::sinsp_suppress::suppress_comm(const std::string &comm)
 {
@@ -68,7 +68,7 @@ int32_t libsinsp::sinsp_suppress::process_event(scap_evt *e, uint16_t devid)
 		const char *comm = nullptr;
 		uint64_t *ptid = nullptr;
 
-		auto *lens = (uint16_t *)((char *)e + sizeof(struct ppm_evt_hdr));
+		auto *lens = (uint16_t *)((char *)e + sizeof(ppm_evt_hdr));
 		char *valptr = (char *)lens + e->nparams * sizeof(uint16_t);
 
 		ASSERT(e->nparams >= 14);

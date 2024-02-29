@@ -16,9 +16,9 @@ limitations under the License.
 
 */
 
-#include "sinsp_filtercheck_k8s.h"
-#include "sinsp.h"
-#include "sinsp_int.h"
+#include <libsinsp/sinsp_filtercheck_k8s.h>
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
 
 using namespace std;
 
@@ -70,15 +70,15 @@ static const filtercheck_field_info sinsp_filter_check_k8s_fields[] =
 sinsp_filter_check_k8s::sinsp_filter_check_k8s()
 {
 	m_info.m_name = "k8s";
-	m_info.m_desc = "Kubernetes related context. When configured to fetch from the API server, all fields are available. Otherwise, only the `k8s.pod.*` and `k8s.ns.name` fields are populated with data gathered from the container runtime.";
+	m_info.m_desc = "Kubernetes context about pods and namespace name. These fields are populated with data gathered from the container runtime.";
 	m_info.m_fields = sinsp_filter_check_k8s_fields;
 	m_info.m_nfields = sizeof(sinsp_filter_check_k8s_fields) / sizeof(sinsp_filter_check_k8s_fields[0]);
-	m_info.m_flags = filter_check_info::FL_WORKS_ON_THREAD_TABLE;
+	m_info.m_flags = filter_check_info::FL_NONE;
 }
 
-sinsp_filter_check* sinsp_filter_check_k8s::allocate_new()
+std::unique_ptr<sinsp_filter_check> sinsp_filter_check_k8s::allocate_new()
 {
-	return (sinsp_filter_check*) new sinsp_filter_check_k8s();
+	return std::make_unique<sinsp_filter_check_k8s>();
 }
 
 int32_t sinsp_filter_check_k8s::parse_field_name(const char* str, bool alloc_state, bool needed_for_filtering)
@@ -166,7 +166,7 @@ int32_t sinsp_filter_check_k8s::extract_arg(const string& fldname, const string&
 		size_t startpos = fldname.size();
 		parsed_len = (uint32_t)val.find(']', startpos);
 
-		if (parsed_len == std::string::npos)
+		if ((uint32_t) parsed_len == (uint32_t) std::string::npos)
 		{
 			throw sinsp_exception("the field '" + fldname + "' requires an argument but ']' is not found");
 		}

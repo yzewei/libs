@@ -28,16 +28,15 @@ add_library(pman
 
 target_include_directories(pman
 PUBLIC
-    ./include
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    $<BUILD_INTERFACE:${LIBS_DIR}>           # ppm_enum and tables
+    $<BUILD_INTERFACE:${LIBS_DIR}/userspace> # scap-stats struct
     ${ZLIB_INCLUDE}
     ${LIBBPF_INCLUDE}
     ${MODERN_BPF_SKEL_DIR}
     ${LIBELF_INCLUDE}
-    ${LIBSCAP_DIR}/driver ## ppm_enum and tables
-    ${LIBSCAP_DIR}/userspace/libscap ## scap-stats struct
-    ${LIBSCAP_DIR}/driver/modern_bpf ## bpf-shared structs
 )
 
 target_link_libraries(pman
@@ -49,7 +48,7 @@ PUBLIC
     ${ZLIB_LIB}
 )
 
-if(USE_BUNDLED_MODERN_BPF)
+if (TARGET ProbeSkeleton)
     add_dependencies(pman ProbeSkeleton)
 endif()
 

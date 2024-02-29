@@ -16,9 +16,9 @@ limitations under the License.
 
 */
 
-#include "sinsp_filtercheck_fdlist.h"
-#include "sinsp.h"
-#include "sinsp_int.h"
+#include <libsinsp/sinsp_filtercheck_fdlist.h>
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
 
 using namespace std;
 
@@ -43,12 +43,12 @@ sinsp_filter_check_fdlist::sinsp_filter_check_fdlist()
 	m_info.m_desc = "Poll event related fields.";
 	m_info.m_fields = sinsp_filter_check_fdlist_fields;
 	m_info.m_nfields = sizeof(sinsp_filter_check_fdlist_fields) / sizeof(sinsp_filter_check_fdlist_fields[0]);
-	m_info.m_flags = filter_check_info::FL_WORKS_ON_THREAD_TABLE;
+	m_info.m_flags = filter_check_info::FL_NONE;
 }
 
-sinsp_filter_check* sinsp_filter_check_fdlist::allocate_new()
+std::unique_ptr<sinsp_filter_check> sinsp_filter_check_fdlist::allocate_new()
 {
-	return (sinsp_filter_check*) new sinsp_filter_check_fdlist();
+	return std::make_unique<sinsp_filter_check_fdlist>();
 }
 
 uint8_t* sinsp_filter_check_fdlist::extract(sinsp_evt *evt, OUT uint32_t* len, bool sanitize_strings)
@@ -89,7 +89,7 @@ uint8_t* sinsp_filter_check_fdlist::extract(sinsp_evt *evt, OUT uint32_t* len, b
 		bool add_comma = true;
 		int64_t fd = *(int64_t *)(payload + pos);
 
-		sinsp_fdinfo_t *fdinfo = tinfo ? tinfo->get_fd(fd) : NULL;
+		sinsp_fdinfo *fdinfo = tinfo ? tinfo->get_fd(fd) : NULL;
 
 		switch(m_field_id)
 		{

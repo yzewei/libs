@@ -18,9 +18,9 @@ limitations under the License.
 
 #pragma once
 
-#include "scap.h"
-#include "sinsp_public.h"
-#include "tuples.h"
+#include <libscap/scap.h>
+#include <libsinsp/sinsp_public.h>
+#include <libsinsp/tuples.h>
 
 #include <json/json.h>
 
@@ -39,7 +39,7 @@ limitations under the License.
 #endif
 
 class sinsp_evttables;
-typedef union _sinsp_sockinfo sinsp_sockinfo;
+union sinsp_sockinfo;
 class filter_check_info;
 
 extern sinsp_evttables g_infotables;
@@ -95,10 +95,11 @@ public:
 
 	//
 	// Concatenate posix-style path1 and path2 up to max_len in size, normalizing the result.
+	// path1 MUST be '/' terminated and is not sanitized.
 	// If path2 is absolute, the result will be equivalent to path2.
 	// If the result would be too long, the output will contain the string "/PATH_TOO_LONG" instead.
 	//
-	static std::string concatenate_paths(std::string_view path1, std::string_view path2, size_t max_len=SCAP_MAX_PATH_SIZE-1);
+	static std::string concatenate_paths(std::string_view path1, std::string_view path2);
 
 	//
 	// Determines if an IPv6 address is IPv4-mapped
@@ -112,7 +113,7 @@ public:
 
 	static uint64_t get_current_time_ns();
 
-	static bool glob_match(const char *pattern, const char *string);
+	static bool glob_match(const char *pattern, const char *string, const bool& case_insensitive = false);
 
 #ifndef _WIN32
 	//
@@ -120,9 +121,6 @@ public:
 	//
 	static void bt(void);
 #endif // _WIN32
-
-	static bool find_first_env(std::string &out, const std::vector<std::string> &env, const std::vector<std::string> &keys);
-	static bool find_env(std::string &out, const std::vector<std::string> &env, const std::string &key);
 
 	static void split_container_image(const std::string &image,
 					  std::string &hostname,
@@ -132,19 +130,9 @@ public:
 					  std::string &digest,
 					  bool split_repo = true);
 
-	static void parse_suppressed_types(const std::vector<std::string>& supp_strs,
-					   std::vector<ppm_event_code>* supp_ids);
-
-	static const char* event_name_by_id(uint16_t id);
-
 	static void ts_to_string(uint64_t ts, OUT std::string* res, bool date, bool ns);
 
 	static void ts_to_iso_8601(uint64_t ts, OUT std::string* res);
-
-        // Limited version of iso 8601 time string parsing, that assumes a
-        // timezone of Z for UTC, but does support parsing fractional seconds,
-        // unlike get_epoch_utc_seconds_* below.
-	static bool parse_iso_8601_utc_string(const std::string& time_str, uint64_t &ns);
 
 	//
 	// Convert caps from their numeric representation to a space-separated string list
@@ -342,8 +330,8 @@ public:
 			m_avail_list.pop_front();
 		}
 	}
-	void push(OBJ* newentry)
 
+	void push(OBJ* newentry)
 	{
 		m_avail_list.push_front(newentry);
 	}
@@ -359,7 +347,7 @@ public:
 		return head;
 	}
 
-	bool empty()
+	bool empty() const
 	{
 		return m_avail_list.empty();
 	}
@@ -387,7 +375,7 @@ private:
 template<typename T>
 int ci_find_substr(const T& str1, const T& str2, const std::locale& loc = std::locale())
 {
-	typename T::const_iterator it = std::search(str1.begin(), str1.end(),
+	auto it = std::search(str1.begin(), str1.end(),
 		str2.begin(), str2.end(), ci_equal<typename T::value_type>(loc) );
 	if(it != str1.end()) { return it - str1.begin(); }
 	return -1;

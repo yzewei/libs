@@ -28,7 +28,7 @@ or GPL2.txt for full copies of the license.
 /*
  * Macros for packing in different build environments
  */
-#if !defined(CYGWING_AGENT) && defined(_WIN32)
+#if defined(_WIN32)
 #define _packed __pragma(pack(push, 1)); __pragma(pack(pop))
 #else
 #define _packed __attribute__((packed))
@@ -289,6 +289,13 @@ or GPL2.txt for full copies of the license.
  */
 #define PPM_AT_SYMLINK_FOLLOW	0x400
 #define PPM_AT_EMPTY_PATH       0x1000
+
+/*
+ * newfstatat() flags
+ */
+#define PPM_AT_NO_AUTOMOUNT		0x800
+#define PPM_AT_SYMLINK_NOFOLLOW	0x100
+
 
 /*
  * rlimit resources
@@ -797,6 +804,47 @@ or GPL2.txt for full copies of the license.
 #define PPM_MODULE_INIT_IGNORE_MODVERSIONS	1
 #define PPM_MODULE_INIT_IGNORE_VERMAGIC     2
 #define PPM_MODULE_INIT_COMPRESSED_FILE     4
+
+/*
+ * bpf_commands 
+*/
+#define PPM_BPF_MAP_CREATE			0
+#define	PPM_BPF_MAP_LOOKUP_ELEM     1
+#define	PPM_BPF_MAP_UPDATE_ELEM		2
+#define	PPM_BPF_MAP_DELETE_ELEM		3
+#define	PPM_BPF_MAP_GET_NEXT_KEY	4
+#define	PPM_BPF_PROG_LOAD			5
+#define	PPM_BPF_OBJ_PIN				6
+#define	PPM_BPF_OBJ_GET				7
+#define	PPM_BPF_PROG_ATTACH			8
+#define	PPM_BPF_PROG_DETACH			9
+#define	PPM_BPF_PROG_TEST_RUN		10
+#define	PPM_BPF_PROG_RUN  PPM_BPF_PROG_TEST_RUN
+#define	PPM_BPF_PROG_GET_NEXT_ID	11
+#define	PPM_BPF_MAP_GET_NEXT_ID		12
+#define	PPM_BPF_PROG_GET_FD_BY_ID	13
+#define	PPM_BPF_MAP_GET_FD_BY_ID	14
+#define	PPM_BPF_OBJ_GET_INFO_BY_FD	15
+#define	PPM_BPF_PROG_QUERY			16
+#define	PPM_BPF_RAW_TRACEPOINT_OPEN	17
+#define	PPM_BPF_BTF_LOAD			18
+#define	PPM_BPF_BTF_GET_FD_BY_ID	19
+#define	PPM_BPF_TASK_FD_QUERY		20
+#define	PPM_BPF_MAP_LOOKUP_AND_DELETE_ELEM 21
+#define	PPM_BPF_MAP_FREEZE			22
+#define	PPM_BPF_BTF_GET_NEXT_ID		23
+#define	PPM_BPF_MAP_LOOKUP_BATCH	24		
+#define	PPM_BPF_MAP_LOOKUP_AND_DELETE_BATCH 25
+#define	PPM_BPF_MAP_UPDATE_BATCH	26
+#define	PPM_BPF_MAP_DELETE_BATCH	27
+#define	PPM_BPF_LINK_CREATE			28
+#define	PPM_BPF_LINK_UPDATE			29
+#define	PPM_BPF_LINK_GET_FD_BY_ID	30
+#define	PPM_BPF_LINK_GET_NEXT_ID	31
+#define	PPM_BPF_ENABLE_STATS		32
+#define	PPM_BPF_ITER_CREATE			33
+#define	PPM_BPF_LINK_DETACH			34
+#define	PPM_BPF_PROG_BIND_MAP		35
 
 /*
  * Get/set the timerslack as used by poll/select/nanosleep
@@ -1413,7 +1461,13 @@ typedef enum {
 	PPME_SYSCALL_MKNOD_X = 415,
 	PPME_SYSCALL_MKNODAT_E = 416,
 	PPME_SYSCALL_MKNODAT_X = 417,
-	PPM_EVENT_MAX = 418
+	PPME_SYSCALL_NEWFSTATAT_E = 418,
+	PPME_SYSCALL_NEWFSTATAT_X = 419,
+	PPME_SYSCALL_PROCESS_VM_READV_E = 420,
+	PPME_SYSCALL_PROCESS_VM_READV_X = 421,
+	PPME_SYSCALL_PROCESS_VM_WRITEV_E = 422,
+	PPME_SYSCALL_PROCESS_VM_WRITEV_X = 423,
+	PPM_EVENT_MAX = 424
 } ppm_event_code;
 /*@}*/
 
@@ -1892,7 +1946,12 @@ enum extra_event_prog_code
 	PPM_SC_X(VM86, 433) \
 	PPM_SC_X(OLDOLDUNAME, 434) \
 	PPM_SC_X(SUBPAGE_PROT, 435) \
-	PPM_SC_X(PCICONFIG_IOBASE, 436)
+	PPM_SC_X(PCICONFIG_IOBASE, 436) \
+	PPM_SC_X(LISTMOUNT, 437) \
+	PPM_SC_X(STATMOUNT, 438) \
+	PPM_SC_X(LSM_GET_SELF_ATTR, 439) \
+	PPM_SC_X(LSM_SET_SELF_ATTR, 440) \
+	PPM_SC_X(LSM_LIST_MODULES, 441)
 
 typedef enum {
 #define PPM_SC_X(name, value) PPM_SC_##name = (value),
@@ -2068,7 +2127,6 @@ struct ppm_evt_hdr {
 /*
  * IOCTL codes
  */
-#ifndef CYGWING_AGENT
 #define PPM_IOCTL_MAGIC	's'
 // #define PPM_IOCTL_DISABLE_CAPTURE _IO(PPM_IOCTL_MAGIC, 0) Support dropped
 // #define PPM_IOCTL_ENABLE_CAPTURE _IO(PPM_IOCTL_MAGIC, 1) Support dropped
@@ -2105,7 +2163,6 @@ struct ppm_evt_hdr {
 #define PPM_IOCTL_DISABLE_TP _IO(PPM_IOCTL_MAGIC, 32)
 #define PPM_IOCTL_ENABLE_DROPFAILED _IO(PPM_IOCTL_MAGIC, 33)
 #define PPM_IOCTL_DISABLE_DROPFAILED _IO(PPM_IOCTL_MAGIC, 34)
-#endif // CYGWING_AGENT
 
 extern const struct ppm_name_value socket_families[];
 extern const struct ppm_name_value file_flags[];
@@ -2136,6 +2193,7 @@ extern const struct ppm_name_value access_flags[];
 extern const struct ppm_name_value pf_flags[];
 extern const struct ppm_name_value unlinkat_flags[];
 extern const struct ppm_name_value linkat_flags[];
+extern const struct ppm_name_value newfstatat_flags[];
 extern const struct ppm_name_value chmod_mode[];
 extern const struct ppm_name_value mknod_mode[];
 extern const struct ppm_name_value renameat2_flags[];
@@ -2154,10 +2212,10 @@ extern const struct ppm_name_value fchownat_flags[];
 extern const struct ppm_name_value prctl_options[];
 extern const struct ppm_name_value memfd_create_flags[];
 extern const struct ppm_name_value pidfd_open_flags[];
+extern const struct ppm_name_value bpf_commands[];
 extern const struct ppm_param_info sockopt_dynamic_param[];
 extern const struct ppm_param_info ptrace_dynamic_param[];
 extern const struct ppm_param_info bpf_dynamic_param[];
-
 /*!
   \brief Process information as returned by the PPM_IOCTL_GET_PROCLIST IOCTL.
 */

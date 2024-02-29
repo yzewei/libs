@@ -18,8 +18,8 @@ limitations under the License.
 
 #pragma once
 
-#include <sinsp.h>
-#include "chisel_viewinfo.h"
+#include <libsinsp/sinsp.h>
+#include <chisel/chisel_viewinfo.h>
 
 class sinsp_filter_check;
 
@@ -43,11 +43,11 @@ typedef struct lua_State lua_State;
 /*!
   \brief This is the class that compiles and runs filters.
 */
-typedef struct chiseldir_info
+struct chiseldir_info
 {
 	bool m_need_to_resolve;
 	std::string m_dir;
-}chiseldir_info;
+};
 
 class chiselarg_desc
 {
@@ -84,6 +84,21 @@ public:
 	std::string m_shortdesc;
 	std::vector<chiselarg_desc> m_args;
 	chisel_view_info m_viewinfo;
+};
+
+class chisel_metric
+{
+public:
+	void reset()
+	{
+		m_name = "";
+		m_value = 0;
+		m_tags.clear();
+	}
+
+	std::string m_name;
+	double m_value = 0;
+	std::map<std::string, std::string> m_tags;
 };
 
 class chiselinfo

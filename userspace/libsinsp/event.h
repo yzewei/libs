@@ -21,35 +21,26 @@ limitations under the License.
 #include <optional>
 #include <unordered_map>
 #include <string_view>
+#include <memory>
 
 #include <json/json.h>
 
-#ifndef VISIBILITY_PRIVATE
-#define VISIBILITY_PRIVATE private:
-#endif
+#include <libsinsp/sinsp_inet.h>
+#include <libsinsp/sinsp_public.h>
+#include <libsinsp/sinsp_event_source.h>
+#include <libscap/scap.h>
+#include <libsinsp/settings.h>
+#include <libsinsp/sinsp_exception.h>
+#include <libsinsp/fdinfo.h>
 
-#include "sinsp_inet.h"
-#include "sinsp_public.h"
-#include "sinsp_event_source.h"
-#include "scap.h"
-#include "gen_filter.h"
-#include "settings.h"
-#include "sinsp_exception.h"
-
-typedef class sinsp sinsp;
-typedef class sinsp_threadinfo sinsp_threadinfo;
+class sinsp;
+class sinsp_threadinfo;
 class sinsp_evt;
-
-namespace test_helpers {
-	class event_builder;
-	class sinsp_mock;
-}
-
 
 ///////////////////////////////////////////////////////////////////////////////
 // Event arguments
 ///////////////////////////////////////////////////////////////////////////////
-typedef enum filtercheck_field_flags
+enum filtercheck_field_flags
 {
 	EPF_NONE              = 0,
 	EPF_FILTER_ONLY       = 1 << 0, ///< this field can only be used as a filter.
@@ -63,20 +54,7 @@ typedef enum filtercheck_field_flags
 	EPF_ARG_INDEX         = 1 << 8, ///< this field accepts numeric arguments.
 	EPF_ARG_KEY           = 1 << 9, ///< this field accepts string arguments.
 	EPF_DEPRECATED        = 1 << 10,///< this field is deprecated.
-}filtercheck_field_flags;
-
-/*!
-  \brief Information about a filter/formatting field.
-*/
-typedef struct filtercheck_field_info
-{
-	ppm_param_type m_type; ///< Field type.
-	uint32_t m_flags;  ///< Field flags.
-	ppm_print_format m_print_format;  ///< If this is a numeric field, this flag specifies if it should be rendered as octal, decimal or hex.
-	char m_name[64];  ///< Field name.
-	char m_display[64];  ///< Field display name (short description). May be empty.
-	char m_description[1024];  ///< Field description.
-}filtercheck_field_info;
+};
 
 /** @defgroup event Event manipulation
  * Classes to manipulate events, extract their content and convert them into strings.
@@ -179,7 +157,7 @@ inline std::string_view get_event_param_as<std::string_view>(const sinsp_evt_par
   events and their parameters, including parsing, formatting and extracting
   state like the event process or FD.
 */
-class SINSP_PUBLIC sinsp_evt : public gen_event
+class SINSP_PUBLIC sinsp_evt
 {
 public:
 	/*!
@@ -228,6 +206,13 @@ public:
 		subcategory m_subcategory;		///< Domain for IO and wait events
 	};
 
+	enum flags
+	{
+		SINSP_EF_NONE = 0,
+		SINSP_EF_PARAMS_LOADED = 1,
+		// SINSP_EF_IS_TRACER = (1 << 1), // note: deprecated
+	};
+
 	sinsp_evt();
 	sinsp_evt(sinsp* inspector);
 	virtual ~sinsp_evt();
@@ -235,9 +220,19 @@ public:
 	/*!
 	  \brief Set the inspector.
 	*/
-	void inspector(sinsp *value)
+	inline void set_inspector(sinsp *value)
 	{
 		m_inspector = value;
+	}
+
+	inline sinsp* get_inspector()
+	{
+		return m_inspector;
+	}
+
+	inline const sinsp* get_inspector() const
+	{
+		return m_inspector;
 	}
 
 	/*!
@@ -259,9 +254,14 @@ public:
 	/*!
 	  \brief Get the number of the CPU where this event was captured.
 	*/
-	inline int16_t get_cpuid() const
+	inline uint16_t get_cpuid() const
 	{
 		return m_cpuid;
+	}
+
+	inline void set_cpuid(uint16_t v)
+	{
+		m_cpuid = v;
 	}
 
 	/*!
@@ -269,7 +269,7 @@ public:
 
 	  \note For a list of event types, refer to \ref etypes.
 	*/
-	inline uint16_t get_type() const override
+	virtual inline uint16_t get_type() const
 	{
 		return m_pevt->type;
 	}
@@ -284,6 +284,11 @@ public:
 		return m_source_idx;
 	}
 
+	inline void set_source_idx(size_t v)
+	{
+		m_source_idx = v;
+	}
+
 	/*!
 	  \brief Get the event source name, as in the event's inspector
 	  event sources. Returns sinsp_no_event_source_name if
@@ -294,12 +299,22 @@ public:
 		return m_source_name;
 	}
 
+	inline void set_source_name(const char* v)
+	{
+		m_source_name = v;
+	}
+
 	/*!
 	  \brief Get the event info
 	*/
 	inline const ppm_event_info* get_info() const
 	{
 		return m_info;
+	}
+
+	inline void set_info(const ppm_event_info* v)
+	{
+		m_info = v;
 	}
 
 	/*!
@@ -320,7 +335,7 @@ public:
 
 	  \return The event timestamp, in nanoseconds from epoch
 	*/
-	inline uint64_t get_ts() const override
+	virtual inline uint64_t get_ts() const
 	{
 		return m_pevt->ts;
 	}
@@ -342,10 +357,10 @@ public:
 		 *   - `EC_TRACEPOINT
 		 *   - `EC_PLUGIN`
 		 *   - `EC_METAEVENT`
-		 * 
+		 *
 		 * 2. The lowest bits represent the syscall category
 		 * to which the specific event belongs.
-		 * 
+		 *
 		 * This function removes the highest bits, so we consider only the syscall category.
 		 */
 		const int bitmask = EC_SYSCALL - 1;
@@ -355,7 +370,7 @@ public:
 	/*!
 	  \brief Get the ID of the thread that generated the event.
 	*/
-	int64_t get_tid();
+	int64_t get_tid() const;
 
 	/*!
 	  \brief Return the information about the thread that generated the event.
@@ -371,9 +386,19 @@ public:
 
 	  \note For events that are not I/O related, get_fd_info() returns NULL.
 	*/
-	inline sinsp_fdinfo_t* get_fd_info()
+	inline const sinsp_fdinfo* get_fd_info() const
 	{
 		return m_fdinfo;
+	}
+
+	inline sinsp_fdinfo* get_fd_info()
+	{
+		return m_fdinfo;
+	}
+
+	inline void set_fd_info(sinsp_fdinfo* v)
+	{
+		m_fdinfo = v;
 	}
 
 	inline bool fdinfo_name_changed() const
@@ -391,7 +416,7 @@ public:
 
 	  \note For events that are not I/O related, get_fd_num() returns sinsp_evt::INVALID_FD_NUM.
 	*/
-	int64_t get_fd_num();
+	int64_t get_fd_num() const;
 
 	/*!
 	  \brief Return the number of parameters that this event has.
@@ -443,19 +468,13 @@ public:
 	  \brief Return the event's category, based on the event type and the FD on
 	   which the event operates.
 	*/
-	void get_category(OUT sinsp_evt::category* cat);
+	void get_category(OUT sinsp_evt::category* cat) const;
 
 	/*!
 	  \brief Return true if the event has been rejected by the filtering system.
 	*/
-	bool is_filtered_out();
-	scap_dump_flags get_dump_flags(OUT bool* should_drop);
-
-	// todo(jasondellaluce): this is deprecated and will need to be removed
-	inline uint16_t get_source() const override
-	{
-		return ESRC_SINSP;
-	}
+	bool is_filtered_out() const;
+	scap_dump_flags get_dump_flags(OUT bool* should_drop) const;
 
 	/*!
 	  \brief Returns true if this event represents a system call error,
@@ -489,15 +508,10 @@ public:
 
 	uint64_t get_lastevent_ts() const;
 
-// Doxygen doesn't understand VISIBILITY_PRIVATE
-#ifdef _DOXYGEN
-private:
-#endif
-
 	void set_iosize(uint32_t size);
-	uint32_t get_iosize();
+	uint32_t get_iosize() const;
 
-	std::string get_base_dir(uint32_t id, sinsp_threadinfo *tinfo);
+	std::string get_base_dir(uint32_t id, sinsp_threadinfo*);
 
 	const char* get_param_as_str(uint32_t id, OUT const char** resolved_str, param_fmt fmt = PF_NORMAL);
 
@@ -508,9 +522,9 @@ private:
 		m_flags = EF_NONE;
 		m_info = &(m_event_info_table[m_pevt->type]);
 		m_fdinfo = NULL;
+		m_fdinfo_ref.reset();
 		m_fdinfo_name_changed = false;
 		m_iosize = 0;
-		m_poriginal_evt = NULL;
 		m_source_idx = sinsp_no_event_source_idx;
 		m_source_name = sinsp_no_event_source_name;
 	}
@@ -520,6 +534,7 @@ private:
 		m_tinfo_ref.reset();
 		m_tinfo = NULL;
 		m_fdinfo = NULL;
+		m_fdinfo_ref.reset();
 		m_fdinfo_name_changed = false;
 	}
 	inline void init(uint8_t* evdata, uint16_t cpuid)
@@ -529,23 +544,24 @@ private:
 		m_info = &(m_event_info_table[m_pevt->type]);
 		m_tinfo_ref.reset();
 		m_tinfo = NULL;
+		m_fdinfo_ref.reset();
 		m_fdinfo = NULL;
 		m_fdinfo_name_changed = false;
 		m_iosize = 0;
 		m_cpuid = cpuid;
-		m_poriginal_evt = NULL;
 		m_source_idx = sinsp_no_event_source_idx;
 		m_source_name = sinsp_no_event_source_name;
 	}
 	inline void init(scap_evt *scap_event,
 			 ppm_event_info * ppm_event,
 			 sinsp_threadinfo *threadinfo,
-			 sinsp_fdinfo_t *fdinfo)
+			 sinsp_fdinfo *fdinfo)
 	{
 		m_pevt = scap_event;
 		m_info = ppm_event;
 		m_tinfo_ref.reset(); // we don't own the threadinfo so don't try to manage its lifetime
 		m_tinfo = threadinfo;
+		m_tinfo_ref.reset();
 		m_fdinfo = fdinfo;
 		m_source_idx = sinsp_no_event_source_idx;
 		m_source_name = sinsp_no_event_source_name;
@@ -581,43 +597,43 @@ private:
 		/* We need the event info to overwrite some parameters if necessary. */
 		const struct ppm_event_info* event_info = &m_event_info_table[m_pevt->type];
 		int param_type = 0;
-		
+
 		for(j = 0; j < nparams; j++)
 		{
 			/* Here we need to manage a particular case:
-			* 
+			*
 			*    - PT_CHARBUF
 			*    - PT_FSRELPATH
 			*    - PT_BYTEBUF
 			*    - PT_BYTEBUF
-			* 
+			*
 			* In the past these params could be `<NA>` or `(NULL)` or empty.
 			* Now they can be only empty! The ideal solution would be:
 			* 	params[i].buf = NULL;
 			*	params[i].size = 0;
-			* 
+			*
 			* The problem is that userspace is not
 			* able to manage `NULL` pointers... but it manages `<NA>` so we
 			* convert all these cases to `<NA>` when they are empty!
-			* 
+			*
 			* If we read scap-files we could face `(NULL)` params, so also in
 			* this case we convert them to `<NA>`.
-			* 
+			*
 			* To be honest there could be another corner case, but right now
 			* we don't have to manage it:
-			*    
+			*
 			*    - PT_SOCKADDR
 			*    - PT_SOCKTUPLE
 			*    - PT_FDLIST
-			* 
+			*
 			* Could be empty, so we will have:
 			* 	params[i].buf = "pointer to the next param";
 			*	params[i].size = 0;
-			* 
+			*
 			* However, as we said in the previous case, the ideal outcome would be:
 			* 	params[i].buf = NULL;
 			*	params[i].size = 0;
-			* 
+			*
 			* The difference with the previous case is that the userspace can manage
 			* these params when they have `params[i].size == 0`, so we don't have
 			* to use the `<NA>` workaround! We could also introduce the `NULL` and so
@@ -627,7 +643,7 @@ private:
 			* step we would keep them as they are.
 			*/
 			param_type = event_info->params[j].type;
-			
+
 			if((param_type == PT_CHARBUF ||
 				param_type == PT_FSRELPATH ||
 				param_type == PT_FSPATH)
@@ -650,25 +666,140 @@ private:
 	char* render_fd(int64_t fd, const char** resolved_str, sinsp_evt::param_fmt fmt);
 	int render_fd_json(Json::Value *ret, int64_t fd, const char** resolved_str, sinsp_evt::param_fmt fmt);
 	inline uint32_t get_dump_flags() const { return m_dump_flags; }
+	inline void set_dump_flags(uint32_t v) { m_dump_flags = v; }
 	static bool clone_event(sinsp_evt& dest, const sinsp_evt& src);
-	int32_t get_errorcode() { return m_errorcode; }
+	int32_t get_errorcode() const { return m_errorcode; }
+	inline void set_errorcode(int32_t v) { m_errorcode = v; }
 
 	// Save important values from the provided enter event. They
 	// are accessible from get_enter_evt_param().
 	void save_enter_event_params(sinsp_evt* enter_evt);
-	std::optional<std::reference_wrapper<std::string>> get_enter_evt_param(const std::string& param);
+	std::optional<std::reference_wrapper<const std::string>> get_enter_evt_param(const std::string& param) const;
 
-VISIBILITY_PRIVATE
-	enum flags
+	inline const scap_evt* get_scap_evt() const
 	{
-		SINSP_EF_NONE = 0,
-		SINSP_EF_PARAMS_LOADED = 1,
-		// SINSP_EF_IS_TRACER = (1 << 1), // note: deprecated
-	};
+		return m_pevt;
+	}
+
+	inline scap_evt* get_scap_evt()
+	{
+		return m_pevt;
+	}
+
+	inline void set_scap_evt(scap_evt* v)
+	{
+		m_pevt = v;
+	}
+	
+	inline const char* get_scap_evt_storage() const
+	{
+		return m_pevt_storage;
+	}
+
+	inline char* get_scap_evt_storage()
+	{
+		return m_pevt_storage;
+	}
+
+	inline void set_scap_evt_storage(char* v)
+	{
+		m_pevt_storage = v;
+	}
+	
+	inline uint32_t get_flags() const
+	{
+		return m_flags;
+	}
+
+	inline void set_flags(uint32_t v)
+	{
+		m_flags = v;
+	}
+
+	inline int32_t get_rawbuf_str_len() const
+	{
+		return m_rawbuf_str_len;
+	}
+	
+	inline void set_rawbuf_str_len(int32_t v)
+	{
+		m_rawbuf_str_len = v;
+	}
+	
+	inline void set_filtered_out(bool v)
+	{
+		m_filtered_out = v;
+	}
+
+	inline std::shared_ptr<const sinsp_threadinfo> get_tinfo_ref() const
+	{
+		return m_tinfo_ref;
+	}
+
+	inline std::shared_ptr<sinsp_threadinfo> get_tinfo_ref()
+	{
+		return m_tinfo_ref;
+	}
+
+	inline void set_tinfo_ref(std::shared_ptr<sinsp_threadinfo> v)
+	{
+		m_tinfo_ref = v;
+	}
+
+	inline const sinsp_threadinfo* get_tinfo() const
+	{
+		return m_tinfo;
+	}
+
+	inline sinsp_threadinfo* get_tinfo()
+	{
+		return m_tinfo;
+	}
+
+	inline void set_tinfo(sinsp_threadinfo* v)
+	{
+		m_tinfo = v;
+	}
+
+	inline std::shared_ptr<const sinsp_fdinfo> get_fdinfo_ref() const
+	{
+		return m_fdinfo_ref;
+	}
+
+	inline std::shared_ptr<sinsp_fdinfo> get_fdinfo_ref()
+	{
+		return m_fdinfo_ref;
+	}
+
+	inline void set_fdinfo_ref(std::shared_ptr<sinsp_fdinfo> v)
+	{
+		m_fdinfo_ref = v;
+	}
+	
+	inline const std::vector<char>& get_paramstr_storage() const
+	{
+		return m_paramstr_storage;
+	}
+
+	inline std::vector<char>& get_paramstr_storage()
+	{
+		return m_paramstr_storage;
+	}
+
+	inline const std::vector<sinsp_evt_param>& get_params() const
+	{
+		return m_params;
+	}
+
+	inline std::vector<sinsp_evt_param>& get_params()
+	{
+		return m_params;
+	}
+
+private:
 
 	sinsp* m_inspector;
 	scap_evt* m_pevt;
-	scap_evt* m_poriginal_evt;	// This is used when the original event is replaced by a different one (e.g. in the case of user events)
 	char *m_pevt_storage;           // In some cases an alternate buffer is used to hold m_pevt. This points to that storage.
 	uint16_t m_cpuid;
 	uint64_t m_evtnum;
@@ -685,7 +816,7 @@ VISIBILITY_PRIVATE
 	// it should either be null, or point to the same place as m_tinfo
 	std::shared_ptr<sinsp_threadinfo> m_tinfo_ref;
 	sinsp_threadinfo* m_tinfo;
-	sinsp_fdinfo_t* m_fdinfo;
+	sinsp_fdinfo* m_fdinfo;
 
 	// If true, then the associated fdinfo changed names as a part
 	// of parsing this event.
@@ -697,36 +828,13 @@ VISIBILITY_PRIVATE
 	bool m_filtered_out;
 	const struct ppm_event_info* m_event_info_table;
 
-	std::shared_ptr<sinsp_fdinfo_t> m_fdinfo_ref;
+	std::shared_ptr<sinsp_fdinfo> m_fdinfo_ref;
 	// For some exit events, the "path" argument from the
 	// corresponding enter event is stored here.
 	std::unordered_map<std::string, std::string> m_enter_path_param;
 
 	size_t m_source_idx;
 	const char* m_source_name;
-
-	friend class sinsp;
-	friend class sinsp_parser;
-	friend class sinsp_threadinfo;
-	friend class sinsp_plugin;
-	friend class sinsp_analyzer;
-	friend class sinsp_filter_check_event;
-	friend class sinsp_filter_check_thread;
-	friend class sinsp_dumper;
-	friend class sinsp_analyzer_parsers;
-	friend class lua_cbacks;
-	friend class sinsp_container_manager;
-	friend class chisel_table;
-	friend class sinsp_cursesui;
-	friend class sinsp_baseliner;
-	friend class capture_job_handler;
-	friend class capture_job;
-	friend class sinsp_memory_dumper;
-	friend class sinsp_memory_dumper_job;
-	friend class protocol_manager;
-	friend class test_helpers::event_builder;
-	friend class test_helpers::sinsp_mock;
-	friend class sinsp_usergroup_manager;
 };
 
 /*@}*/

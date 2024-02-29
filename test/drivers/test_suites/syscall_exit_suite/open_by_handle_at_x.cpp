@@ -1,5 +1,7 @@
-#include "strl.h"
+#include <fcntl.h>
+#include <libscap/strl.h>
 #include "../../event_class/event_class.h"
+#include "../../helpers/file_opener.h"
 #include <sys/mount.h>
 
 #if defined(__NR_open_by_handle_at) && defined(__NR_name_to_handle_at) && defined(__NR_openat)
@@ -35,11 +37,8 @@ void do___open_by_handle_atX_success(int *open_by_handle_fd, int *dirfd, char *f
 	/*
 	 * 1. Open a temp file.
 	 */
-	const char *pathname = ".";
-	int flags = O_RDWR | O_TMPFILE | O_DIRECTORY;
-	mode_t mode = 0;
-	int fd = syscall(__NR_openat, *dirfd, pathname, flags, mode);
-	assert_syscall_state(SYSCALL_SUCCESS, "openat", fd, NOT_EQUAL, -1);
+
+	auto fo = file_opener(".", (O_RDWR | O_TMPFILE), *dirfd);
 
 	/* Allocate file_handle structure. */
 	struct file_handle *fhp;
@@ -55,9 +54,9 @@ void do___open_by_handle_atX_success(int *open_by_handle_fd, int *dirfd, char *f
 	 * in this case, the call fails with the error EOVERFLOW and handle->handle_bytes is set to indicate the required size;
 	 */
 	int mount_id;
-	flags = 0;
+	int flags = 0;
 	fhp->handle_bytes = 0;
-	assert_syscall_state(SYSCALL_FAILURE, "name_to_handle_at", syscall(__NR_name_to_handle_at, *dirfd, pathname, fhp, &mount_id, flags));
+	assert_syscall_state(SYSCALL_FAILURE, "name_to_handle_at", syscall(__NR_name_to_handle_at, *dirfd, fo.get_pathname(), fhp, &mount_id, flags));
 
 	/*
 	 * 2. Reallocate file_handle structure with the correct size.
@@ -74,7 +73,7 @@ void do___open_by_handle_atX_success(int *open_by_handle_fd, int *dirfd, char *f
 	/*
 	 * 3. Get file handle.
 	 */
-	assert_syscall_state(SYSCALL_SUCCESS, "name_to_handle_at", syscall(__NR_name_to_handle_at, *dirfd, pathname, fhp, &mount_id, flags), NOT_EQUAL, -1);
+	assert_syscall_state(SYSCALL_SUCCESS, "name_to_handle_at", syscall(__NR_name_to_handle_at, *dirfd, fo.get_pathname(), fhp, &mount_id, flags), NOT_EQUAL, -1);
 
 	/*
 	 * 4. Call `open_by_handle_at`.
@@ -104,7 +103,6 @@ void do___open_by_handle_atX_success(int *open_by_handle_fd, int *dirfd, char *f
 	 * 6. Cleaning phase.
 	 */
 	close(*open_by_handle_fd);
-	close(fd);
 	free(fhp);
 
 	if(use_mountpoint)
@@ -119,6 +117,28 @@ void do___open_by_handle_atX_success(int *open_by_handle_fd, int *dirfd, char *f
 TEST(SyscallExit, open_by_handle_atX_success)
 {
 	auto evt_test = get_syscall_event_test(__NR_open_by_handle_at, EXIT_EVENT);
+
+	auto fo = file_opener(".", (O_RDWR | O_TMPFILE | O_DIRECTORY));
+
+	if(!fo.get_fd())
+	{
+		FAIL() << "Error opening current directory" << std::endl;
+	}
+	struct file_handle *fhp;
+	fhp = (struct file_handle *)malloc(sizeof(*fhp) + sizeof(fhp->handle_bytes));
+	if(fhp == NULL)
+	{
+		FAIL() << "Error in allocating the `struct file_handle` with malloc" << std::endl;
+	}
+	int mount_id;
+	fhp->handle_bytes = 0;
+	if(syscall(__NR_name_to_handle_at, AT_FDCWD, fo.get_pathname(), fhp, &mount_id, 0) != 0 && errno == EOPNOTSUPP)
+	{
+		/*
+		 * Run the test only if the filesystem supports name_to_handle_at.
+		 */
+		GTEST_SKIP() << "[NAME_TO_HANDLE_AT]: the current filesystem doesn't support this operation." << std::endl;
+	}
 
 	evt_test->enable_capture();
 
@@ -141,7 +161,6 @@ TEST(SyscallExit, open_by_handle_atX_success)
 	}
 
 	evt_test->parse_event();
-
 	evt_test->assert_header();
 
 	/*=============================== ASSERT PARAMETERS  ===========================*/
@@ -161,6 +180,7 @@ TEST(SyscallExit, open_by_handle_atX_success)
 	/*=============================== ASSERT PARAMETERS  ===========================*/
 
 	evt_test->assert_num_params_pushed(4);
+
 }
 
 TEST(SyscallExit, open_by_handle_atX_success_mp)

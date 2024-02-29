@@ -32,11 +32,11 @@ limitations under the License.
 #include <valijson/schema_parser.hpp>
 #include <valijson/validator.hpp>
 
-#include "sinsp_int.h"
-#include "sinsp_exception.h"
-#include "plugin.h"
-#include "plugin_filtercheck.h"
-#include "strl.h"
+#include <libsinsp/sinsp_int.h>
+#include <libsinsp/sinsp_exception.h>
+#include <libsinsp/plugin.h>
+#include <libsinsp/plugin_filtercheck.h>
+#include <libscap/strl.h>
 
 using namespace std;
 
@@ -78,6 +78,13 @@ const char* sinsp_plugin::get_owner_last_error(ss_plugin_owner_t* o)
 		return NULL;
 	}
 	return t->m_last_owner_err.c_str();
+}
+
+static void plugin_log_fn(ss_plugin_owner_t* o, const char* component, const char* msg, ss_plugin_log_severity sev)
+{
+	auto t = static_cast<sinsp_plugin*>(o);
+	std::string prefix = (component == NULL) ? t->name() : std::string(component);
+	libsinsp_logger()->log(prefix + ": " + msg, (sinsp_logger::severity)sev);
 }
 
 std::shared_ptr<sinsp_plugin> sinsp_plugin::create(
@@ -159,14 +166,16 @@ bool sinsp_plugin::init(const std::string &config, std::string &errstr)
 	}
 
 	ss_plugin_rc rc;
+
 	std::string conf = config;
-	validate_init_config(conf);
+	validate_config(conf);
 
 	ss_plugin_init_input in = {};
 	in.owner = this;
 	in.get_owner_last_error = sinsp_plugin::get_owner_last_error;
 	in.tables = NULL;
 	in.config = conf.c_str();
+	in.log_fn = &plugin_log_fn;
 
 	ss_plugin_init_tables_input tables_in = {};
 	ss_plugin_table_fields_vtable_ext table_fields_ext = {};
@@ -627,7 +636,7 @@ const libsinsp::events::set<ppm_event_code>& sinsp_plugin::parse_event_codes() c
 	return m_parse_event_codes;
 }
 
-void sinsp_plugin::validate_init_config(std::string& config)
+void sinsp_plugin::validate_config(std::string& config)
 {
 	ss_plugin_schema_type schema_type;
 	std::string schema = get_init_schema(schema_type);
@@ -636,7 +645,7 @@ void sinsp_plugin::validate_init_config(std::string& config)
 		switch (schema_type)
 		{
 			case SS_PLUGIN_SCHEMA_JSON:
-				validate_init_config_json_schema(config, schema);
+				validate_config_json_schema(config, schema);
 				break;
 			default:
 				ASSERT(false);
@@ -649,7 +658,7 @@ void sinsp_plugin::validate_init_config(std::string& config)
 	}
 }
 
-void sinsp_plugin::validate_init_config_json_schema(std::string& config, std::string &schema)
+void sinsp_plugin::validate_config_json_schema(std::string& config, std::string &schema)
 {
 	Json::Value schemaJson;
 	if(!Json::Reader().parse(schema, schemaJson) || schemaJson.type() != Json::objectValue)
@@ -702,6 +711,27 @@ void sinsp_plugin::validate_init_config_json_schema(std::string& config, std::st
 			+ name()
 			+ " init config: failed parsing with provided schema");
 	}
+}
+
+bool sinsp_plugin::set_config(const std::string& config)
+{
+	if(!m_inited)
+	{
+		throw sinsp_exception(std::string(s_not_init_err) + ": " + m_name);
+	}
+
+	std::string conf = config;
+	validate_config(conf);
+
+	ss_plugin_set_config_input input;
+	input.config = conf.c_str();
+
+	if(!m_handle->api.set_config)
+	{
+		return false;
+	}
+
+	return m_handle->api.set_config(m_state, &input) == SS_PLUGIN_SUCCESS;
 }
 
 /** Event Source CAP **/
@@ -769,7 +799,7 @@ std::string sinsp_plugin::event_to_string(sinsp_evt* evt) const
 	if (m_state && m_handle->api.event_to_string)
 	{
 		ss_plugin_event_input input;
-		input.evt = (const ss_plugin_event*) evt->m_pevt;
+		input.evt = (const ss_plugin_event*) evt->get_scap_evt();
 		input.evtnum = evt->get_num();
 		input.evtsrc = evt->get_source_name();
 		ret = str_from_alloc_charbuf(m_handle->api.event_to_string(m_state, &input));
@@ -842,9 +872,9 @@ std::vector<sinsp_plugin::open_param> sinsp_plugin::list_open_params() const
 
 /** Field Extraction CAP **/
 
-sinsp_filter_check* sinsp_plugin::new_filtercheck(std::shared_ptr<sinsp_plugin> plugin)
+std::unique_ptr<sinsp_filter_check> sinsp_plugin::new_filtercheck(std::shared_ptr<sinsp_plugin> plugin)
 {
-	return new sinsp_filter_check_plugin(plugin);
+	return std::make_unique<sinsp_filter_check_plugin>(plugin);
 }
 
 bool sinsp_plugin::extract_fields(sinsp_evt* evt, uint32_t num_fields, ss_plugin_extract_field *fields) const
@@ -855,7 +885,7 @@ bool sinsp_plugin::extract_fields(sinsp_evt* evt, uint32_t num_fields, ss_plugin
 	}
 
 	ss_plugin_event_input ev;
-	ev.evt = (const ss_plugin_event*) evt->m_pevt;
+	ev.evt = (const ss_plugin_event*) evt->get_scap_evt();
 	ev.evtnum = evt->get_num();
 	ev.evtsrc = evt->get_source_name();
 
@@ -882,7 +912,7 @@ bool sinsp_plugin::parse_event(sinsp_evt* evt) const
 	}
 
 	ss_plugin_event_input ev;
-	ev.evt = (const ss_plugin_event*) evt->m_pevt;
+	ev.evt = (const ss_plugin_event*) evt->get_scap_evt();
 	ev.evtnum = evt->get_num();
 	ev.evtsrc = evt->get_source_name();
 
@@ -955,12 +985,12 @@ ss_plugin_rc sinsp_plugin::handle_plugin_async_event(ss_plugin_owner_t *o, const
 	try
 	{
 		auto evt = std::unique_ptr<sinsp_evt>(new sinsp_evt());
-		ASSERT(evt->m_pevt_storage == nullptr);
-		evt->m_pevt_storage = new char[e->len];
-		memcpy(evt->m_pevt_storage, e, e->len);
-		evt->m_cpuid = 0;
-		evt->m_evtnum = 0;
-		evt->m_pevt = (scap_evt *) evt->m_pevt_storage;
+		ASSERT(evt->get_scap_evt_storage() == nullptr);
+		evt->set_scap_evt_storage(new char[e->len]);
+		memcpy(evt->get_scap_evt_storage(), e, e->len);
+		evt->set_cpuid(0);
+		evt->set_num(0);
+		evt->set_scap_evt((scap_evt *) evt->get_scap_evt_storage());
 		evt->init();
 		// note: plugin ID and timestamp will be set by the inspector
 		(*handler)(*p, std::move(evt));

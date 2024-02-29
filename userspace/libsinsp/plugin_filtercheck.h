@@ -21,10 +21,10 @@ limitations under the License.
 #include <memory>
 #include <string>
 #include <vector>
-#include "sinsp_int.h"
-#include "version.h"
-#include "filter.h"
-#include "sinsp_filtercheck.h"
+#include <libsinsp/sinsp_int.h>
+#include <libsinsp/version.h>
+#include <libsinsp/filter.h>
+#include <libsinsp/sinsp_filtercheck.h>
 
 /**
 	\brief This class implements a dynamic filter check that acts as a
@@ -41,7 +41,7 @@ public:
 
 	virtual ~sinsp_filter_check_plugin() = default;
 
-	sinsp_filter_check* allocate_new() override;
+	std::unique_ptr<sinsp_filter_check> allocate_new() override;
 
 	int32_t parse_field_name(
 		const char* str,

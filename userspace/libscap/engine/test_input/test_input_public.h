@@ -14,8 +14,8 @@ limitations under the License.
 
 #pragma once
 
-#include "scap_test.h"
-#include "scap_procs.h"
+#include <libscap/engine/test_input/scap_test.h>
+#include <libscap/scap_procs.h>
 
 #define TEST_INPUT_ENGINE "test_input"
 

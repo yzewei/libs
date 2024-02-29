@@ -24,11 +24,11 @@ limitations under the License.
     typedef void* library_handle_t;
 #endif
 
-#include "strl.h"
+#include <libscap/strl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "plugin_loader.h"
+#include <plugin/plugin_loader.h>
 
 static inline void err_prepend(char* s, const char* prefix, const char* sep)
 {
@@ -135,6 +135,7 @@ plugin_handle_t* plugin_load(const char* path, char* err)
     SYM_RESOLVE(ret, get_async_event_sources);
     SYM_RESOLVE(ret, get_async_events);
     SYM_RESOLVE(ret, set_async_event_handler);
+    SYM_RESOLVE(ret, set_config);
     return ret;
 }
 

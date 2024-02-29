@@ -21,9 +21,10 @@ limitations under the License.
 
 #include <unordered_map>
 #include <string>
-#include "container_info.h"
-#include "procfs_utils.h"
-#include "scap.h"
+#include <memory>
+#include <libsinsp/container_info.h>
+#include <libsinsp/procfs_utils.h>
+#include <libscap/scap.h>
 
 class sinsp;
 class sinsp_dumper;
@@ -46,7 +47,7 @@ namespace libsinsp { namespace procfs_utils { class ns_helper; }}
  * * on PPME_{USER,GROUP}_ADDED, the new user/group is stored in the m_{user,group}_list<container_id>, if not present.
  *
  * * Host users and groups lists are cleared once every DEFAULT_DELETED_USERS_GROUPS_SCAN_TIME_S (1 min by default),
- * 		see sinsp::m_deleted_users_groups_scan_time_ns.
+ * 		see sinsp::m_usergroups_purging_scan_time_ns.
  * 		Then, the users and groups will be refreshed as explained above, every time a threadinfo is created.
  * 		This is needed to fetch deleted users/groups, or overwritten ones.
  * 		Note: PPME_USER_DELETED_E is never sent for host users; we miss
@@ -64,7 +65,7 @@ class sinsp_usergroup_manager
 {
 public:
 	explicit sinsp_usergroup_manager(sinsp* inspector);
-	~sinsp_usergroup_manager();
+	~sinsp_usergroup_manager() = default;
 
 	// Do not call subscribe_container_mgr() in capture mode, because
 	// events shall not be sent as they will be loaded from capture file.
@@ -121,8 +122,8 @@ public:
 
 	// Note: pid is an unused parameter when container_id is an empty string
 	// ie: it is only used when adding users/groups from containers.
-	scap_userinfo *add_user(const std::string &container_id, int64_t pid, uint32_t uid, uint32_t gid, const char *name, const char *home, const char *shell, bool notify = false);
-	scap_groupinfo *add_group(const std::string &container_id, int64_t pid, uint32_t gid, const char *name, bool notify = false);
+	scap_userinfo *add_user(const std::string &container_id, int64_t pid, uint32_t uid, uint32_t gid, std::string_view name, std::string_view home, std::string_view shell, bool notify = false);
+	scap_groupinfo *add_group(const std::string &container_id, int64_t pid, uint32_t gid, std::string_view name, bool notify = false);
 
 	bool rm_user(const std::string &container_id, uint32_t uid, bool notify = false);
 	bool rm_group(const std::string &container_id, uint32_t gid, bool notify = false);
@@ -135,10 +136,10 @@ public:
 	bool m_import_users;
 
 private:
-	scap_userinfo *add_host_user(uint32_t uid, uint32_t gid, const char *name, const char *home, const char *shell, bool notify);
+	scap_userinfo *add_host_user(uint32_t uid, uint32_t gid, std::string_view name, std::string_view home, std::string_view shell, bool notify);
 	scap_userinfo *add_container_user(const std::string &container_id, int64_t pid, uint32_t uid, bool notify);
 
-	scap_groupinfo *add_host_group(uint32_t gid, const char *name, bool notify);
+	scap_groupinfo *add_host_group(uint32_t gid, std::string_view name, bool notify);
 	scap_groupinfo *add_container_group(const std::string &container_id, int64_t pid, uint32_t gid, bool notify);
 
 	bool user_to_sinsp_event(const scap_userinfo *user, sinsp_evt* evt, const std::string &container_id, uint16_t ev_type);
@@ -156,13 +157,14 @@ private:
 		userinfo_map &map,
 		uint32_t uid,
 		uint32_t gid,
-		const char *name,
-		const char *home,
-		const char *shell);
+		std::string_view name,
+		std::string_view home,
+		std::string_view shell);
+
 	scap_groupinfo *groupinfo_map_insert(
 		groupinfo_map &map,
 		uint32_t gid,
-		const char *name);
+		std::string_view name);
 
 	std::unordered_map<std::string, userinfo_map> m_userlist;
 	std::unordered_map<std::string, groupinfo_map> m_grouplist;
@@ -174,7 +176,7 @@ private:
 	scap_groupinfo m_fallback_grp;
 
 	const std::string &m_host_root;
-	libsinsp::procfs_utils::ns_helper *m_ns_helper;
+	std::unique_ptr<libsinsp::procfs_utils::ns_helper> m_ns_helper;
 };
 
 #endif // FALCOSECURITY_LIBS_USER_H

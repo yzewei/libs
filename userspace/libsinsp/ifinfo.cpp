@@ -16,8 +16,8 @@ limitations under the License.
 
 */
 
-#include "sinsp.h"
-#include "sinsp_int.h"
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
 
 sinsp_network_interfaces::sinsp_network_interfaces()
 {
@@ -102,21 +102,21 @@ uint32_t sinsp_network_interfaces::infer_ipv4_address(uint32_t destination_addre
 	return 0;
 }
 
-void sinsp_network_interfaces::update_fd(sinsp_fdinfo_t *fd)
+void sinsp_network_interfaces::update_fd(sinsp_fdinfo& fd)
 {
-	ipv4tuple *pipv4info = &(fd->m_sockinfo.m_ipv4info);
-	ipv6tuple *pipv6info = &(fd->m_sockinfo.m_ipv6info);
+	ipv4tuple *pipv4info = &(fd.m_sockinfo.m_ipv4info);
+	ipv6tuple *pipv6info = &(fd.m_sockinfo.m_ipv6info);
 
 	//
 	// only handle ipv4/ipv6 udp sockets
 	//
-	if(fd->m_type != SCAP_FD_IPV4_SOCK &&
-	   fd->m_type != SCAP_FD_IPV6_SOCK)
+	if(fd.m_type != SCAP_FD_IPV4_SOCK &&
+	   fd.m_type != SCAP_FD_IPV6_SOCK)
 	{
 		return;
 	}
 
-	if(fd->m_type == SCAP_FD_IPV4_SOCK)
+	if(fd.m_type == SCAP_FD_IPV4_SOCK)
 	{
 
 		if(0 != pipv4info->m_fields.m_sip && 0 != pipv4info->m_fields.m_dip)
@@ -154,7 +154,7 @@ void sinsp_network_interfaces::update_fd(sinsp_fdinfo_t *fd)
 			pipv4info->m_fields.m_dip = newaddr;
 		}
 	}
-	else if(fd->m_type == SCAP_FD_IPV6_SOCK)
+	else if(fd.m_type == SCAP_FD_IPV6_SOCK)
 	{
 
 		if(ipv6addr::empty_address != pipv6info->m_fields.m_sip &&
@@ -195,10 +195,8 @@ void sinsp_network_interfaces::update_fd(sinsp_fdinfo_t *fd)
 	}
 }
 
-bool sinsp_network_interfaces::is_ipv4addr_in_subnet(uint32_t addr)
+bool sinsp_network_interfaces::is_ipv4addr_in_subnet(uint32_t addr) const
 {
-	std::vector<sinsp_ipv4_ifinfo>::iterator it;
-
 	//
 	// Accept everything that comes from private internets:
 	// - 10.0.0.0/8
@@ -214,9 +212,9 @@ bool sinsp_network_interfaces::is_ipv4addr_in_subnet(uint32_t addr)
 	}
 
 	// try to find an interface for the same subnet
-	for(it = m_ipv4_interfaces.begin(); it != m_ipv4_interfaces.end(); it++)
+	for(auto& el : m_ipv4_interfaces)
 	{
-		if((it->m_addr & it->m_netmask) == (addr & it->m_netmask))
+		if((el.m_addr & el.m_netmask) == (addr & el.m_netmask))
 		{
 			return true;
 		}

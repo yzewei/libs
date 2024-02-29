@@ -16,12 +16,12 @@ limitations under the License.
 
 */
 
-#include "filterchecks.h"
+#include <libsinsp/filterchecks.h>
 
-#include "chisel.h"
-#include "chisel_api.h"
-#include "chisel_table.h"
-#include "chisel_capture_interrupt_exception.h"
+#include <chisel/chisel.h>
+#include <chisel/chisel_api.h>
+#include <chisel/chisel_table.h>
+#include <chisel/chisel_capture_interrupt_exception.h>
 
 #define HAS_LUA_CHISELS
 
@@ -130,9 +130,7 @@ const static struct luaL_Reg ll_tool [] =
 	{"udp_setpeername", &lua_cbacks::udp_setpeername},
 	{"udp_send", &lua_cbacks::udp_send},
 	{"get_read_progress", &lua_cbacks::get_read_progress},
-#ifdef HAS_ANALYZER
 	{"push_metric", &lua_cbacks::push_metric},
-#endif
 	{NULL,NULL}
 };
 
@@ -213,7 +211,7 @@ void chiselinfo::set_filter(string filterstr)
 
 	if(filterstr != "")
 	{
-		m_filter = compiler.compile();
+		m_filter = compiler.compile().release();
 	}
 }
 
@@ -1095,9 +1093,10 @@ void sinsp_chisel::get_chisel_list(vector<chisel_desc>* chisel_descs)
 			continue;
 		}
 
-		for (auto const& dir_entry : filesystem::directory_iterator(dir_info.m_dir))
+		std::error_code ec;
+		for (auto const& dir_entry : filesystem::directory_iterator(dir_info.m_dir, ec))
 		{
-			if(dir_entry.path().extension() == ".lua")
+			if(!ec && dir_entry.path().extension() == ".lua")
 			{
 				auto res = find_if(chisel_descs->begin(), chisel_descs->end(),
 					[&dir_entry](auto& desc) { return dir_entry.path().filename() == desc.m_name; });
@@ -1752,7 +1751,7 @@ void sinsp_chisel::on_capture_end()
 	if(lua_isfunction(m_ls, -1))
 	{
 		uint64_t ts = m_inspector->m_firstevent_ts;
-		uint64_t te = m_inspector->m_lastevent_ts;
+		uint64_t te = m_inspector->get_lastevent_ts();
 		int64_t delta = te - ts;
 
 		lua_pushnumber(m_ls, (double)(te / 1000000000));

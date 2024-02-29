@@ -25,8 +25,8 @@ limitations under the License.
 #include <list>
 #include <unordered_map>
 
-#include "filter_value.h"
-#include "utils.h"
+#include <libsinsp/filter_value.h>
+#include <libsinsp/utils.h>
 
 namespace path_prefix_map_ut
 {
@@ -339,7 +339,7 @@ Value *path_prefix_map<Value>::match_components_glob(const path_prefix_map_ut::f
 {
 	for(auto& it : m_glob_dirs)
 	{
-		if(sinsp_utils::glob_match(it.first.c_str(), comp->c_str()))
+		if(sinsp_utils::glob_match(it.first.c_str(), comp->c_str(), false))
 		{
 			Value *v = check_match_value(it.second, components, ++comp);
 			if(v != NULL)

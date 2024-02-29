@@ -16,11 +16,11 @@ limitations under the License.
 
 */
 
-#include "sinsp_filtercheck_gen_event.h"
-#include "sinsp.h"
-#include "sinsp_int.h"
-#include "plugin.h"
-#include "plugin_manager.h"
+#include <libsinsp/sinsp_filtercheck_gen_event.h>
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
+#include <libsinsp/plugin.h>
+#include <libsinsp/plugin_manager.h>
 
 using namespace std;
 
@@ -75,9 +75,9 @@ sinsp_filter_check_gen_event::sinsp_filter_check_gen_event()
 	m_u64val = 0;
 }
 
-sinsp_filter_check* sinsp_filter_check_gen_event::allocate_new()
+std::unique_ptr<sinsp_filter_check> sinsp_filter_check_gen_event::allocate_new()
 {
-	return (sinsp_filter_check*) new sinsp_filter_check_gen_event();
+	return std::make_unique<sinsp_filter_check_gen_event>();
 }
 
 Json::Value sinsp_filter_check_gen_event::extract_as_js(sinsp_evt *evt, OUT uint32_t* len)

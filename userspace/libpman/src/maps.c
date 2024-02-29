@@ -20,7 +20,7 @@ limitations under the License.
 
 #include <stdint.h>
 #include "events_prog_names.h"
-#include <scap.h>
+#include <libscap/scap.h>
 
 extern const struct ppm_event_info g_event_info[PPM_EVENT_MAX];
 extern const struct syscall_evt_pair g_syscall_table[SYSCALL_TABLE_SIZE];
@@ -172,7 +172,7 @@ static int add_bpf_program_to_tail_table(int tail_table_fd, const char* bpf_prog
 	if(!bpf_prog)
 	{
 		snprintf(error_message, MAX_ERROR_MESSAGE_LEN, "unable to find BPF program '%s'", bpf_prog_name);
-		pman_print_error((const char*)error_message);
+		pman_print_msg(FALCOSECURITY_LOG_SEV_DEBUG, (const char*)error_message);
 
 		/*
 		 * It's not a hard failure, as programs could be excluded from the

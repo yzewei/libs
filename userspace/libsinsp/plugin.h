@@ -23,15 +23,13 @@ limitations under the License.
 #include <string>
 #include <vector>
 #include <atomic>
-#include <engine/source_plugin/source_plugin_public.h>
-#include "event.h"
-#include "version.h"
-#include "events/sinsp_events.h"
-#include "state/table_registry.h"
-#include "../plugin/plugin_loader.h"
-
-// todo(jasondellaluce: remove this forward declaration)
-class sinsp_filter_check;
+#include <libscap/engine/source_plugin/source_plugin_public.h>
+#include <libsinsp/event.h>
+#include <libsinsp/sinsp_filtercheck.h>
+#include <libsinsp/version.h>
+#include <libsinsp/events/sinsp_events.h>
+#include <libsinsp/state/table_registry.h>
+#include <plugin/plugin_loader.h>
 
 /**
  * @brief An object-oriented representation of a plugin.
@@ -82,7 +80,7 @@ public:
 	 *
 	 * todo(jasondellaluce): make this return a unique_ptr
 	 */
-	static sinsp_filter_check* new_filtercheck(std::shared_ptr<sinsp_plugin> plugin);
+	static std::unique_ptr<sinsp_filter_check> new_filtercheck(std::shared_ptr<sinsp_plugin> plugin);
 
 	/**
 	 * @brief Returns true if the source is compatible with the given set
@@ -160,6 +158,7 @@ public:
 	void destroy();
 	std::string get_last_error() const;
 	std::string get_init_schema(ss_plugin_schema_type& schema_type) const;
+	bool set_config(const std::string& config);
 
 	/** Event Sourcing **/
 	inline uint32_t id() const
@@ -265,7 +264,7 @@ private:
 	std::atomic<async_event_handler_t*> m_async_evt_handler; // note: we don't have thread-safe smart pointers
 
 	/** Generic helpers **/
-	void validate_init_config(std::string& config);
+	void validate_config(std::string& config);
 	bool resolve_dylib_symbols(std::string& errstr);
 	void resolve_dylib_field_arg(Json::Value root, filtercheck_field_info& tf);
 	void resolve_dylib_compatible_sources(
@@ -276,7 +275,7 @@ private:
 		uint16_t *(*get_codes)(uint32_t* numtypes,ss_plugin_t* s),
 		const std::unordered_set<std::string>& sources,
 		libsinsp::events::set<ppm_event_code>& codes);
-	void validate_init_config_json_schema(std::string& config, std::string& schema);
+	void validate_config_json_schema(std::string& config, std::string& schema);
 	static const char* get_owner_last_error(ss_plugin_owner_t* o);
 
 	/** Event parsing helpers **/

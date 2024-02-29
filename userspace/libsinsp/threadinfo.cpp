@@ -23,10 +23,10 @@ limitations under the License.
 #endif
 #include <stdio.h>
 #include <algorithm>
-#include "strl.h"
-#include "sinsp.h"
-#include "sinsp_int.h"
-#include "scap-int.h"
+#include <libscap/strl.h>
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
+#include <libscap/scap-int.h>
 
 constexpr static const char* s_thread_table_name = "threads";
 
@@ -145,6 +145,9 @@ void sinsp_threadinfo::init()
 	m_exe_ino_ctime_duration_clone_ts = 0;
 	m_exe_ino_ctime_duration_pidns_start = 0;
 	m_filtered_out = false;
+	m_exe_writable = false;
+	m_exe_upper_layer = false;
+	m_exe_from_memfd = false;
 
 	memset(&m_user, 0, sizeof(scap_userinfo));
 	memset(&m_group, 0, sizeof(scap_groupinfo));
@@ -161,36 +164,34 @@ sinsp_threadinfo::~sinsp_threadinfo()
 
 void sinsp_threadinfo::fix_sockets_coming_from_proc()
 {
-	std::unordered_map<int64_t, sinsp_fdinfo_t>::iterator it;
-
-	for(it = m_fdtable.m_table.begin(); it != m_fdtable.m_table.end(); it++)
-	{
-		if(it->second.m_type == SCAP_FD_IPV4_SOCK)
+	m_fdtable.loop([this](int64_t fd, sinsp_fdinfo& fdi) {
+		if(fdi.m_type == SCAP_FD_IPV4_SOCK)
 		{
-			if(m_inspector->m_thread_manager->m_server_ports.find(it->second.m_sockinfo.m_ipv4info.m_fields.m_sport) !=
+			if(m_inspector->m_thread_manager->m_server_ports.find(fdi.m_sockinfo.m_ipv4info.m_fields.m_sport) !=
 				m_inspector->m_thread_manager->m_server_ports.end())
 			{
 				uint32_t tip;
 				uint16_t tport;
 
-				tip = it->second.m_sockinfo.m_ipv4info.m_fields.m_sip;
-				tport = it->second.m_sockinfo.m_ipv4info.m_fields.m_sport;
+				tip = fdi.m_sockinfo.m_ipv4info.m_fields.m_sip;
+				tport = fdi.m_sockinfo.m_ipv4info.m_fields.m_sport;
 
-				it->second.m_sockinfo.m_ipv4info.m_fields.m_sip = it->second.m_sockinfo.m_ipv4info.m_fields.m_dip;
-				it->second.m_sockinfo.m_ipv4info.m_fields.m_dip = tip;
-				it->second.m_sockinfo.m_ipv4info.m_fields.m_sport = it->second.m_sockinfo.m_ipv4info.m_fields.m_dport;
-				it->second.m_sockinfo.m_ipv4info.m_fields.m_dport = tport;
+				fdi.m_sockinfo.m_ipv4info.m_fields.m_sip = fdi.m_sockinfo.m_ipv4info.m_fields.m_dip;
+				fdi.m_sockinfo.m_ipv4info.m_fields.m_dip = tip;
+				fdi.m_sockinfo.m_ipv4info.m_fields.m_sport = fdi.m_sockinfo.m_ipv4info.m_fields.m_dport;
+				fdi.m_sockinfo.m_ipv4info.m_fields.m_dport = tport;
 
-				it->second.m_name = ipv4tuple_to_string(&it->second.m_sockinfo.m_ipv4info, m_inspector->m_hostname_and_port_resolution_enabled);
+				fdi.m_name = ipv4tuple_to_string(&fdi.m_sockinfo.m_ipv4info, m_inspector->is_hostname_and_port_resolution_enabled());
 
-				it->second.set_role_server();
+				fdi.set_role_server();
 			}
 			else
 			{
-				it->second.set_role_client();
+				fdi.set_role_client();
 			}
 		}
-	}
+		return true;
+	});
 }
 
 #define STR_AS_NUM_JAVA 0x6176616a
@@ -251,16 +252,15 @@ void sinsp_threadinfo::compute_program_hash()
 	}
 }
 
-void sinsp_threadinfo::add_fd_from_scap(scap_fdinfo *fdi, OUT sinsp_fdinfo_t *res)
+void sinsp_threadinfo::add_fd_from_scap(scap_fdinfo *fdi)
 {
-	sinsp_fdinfo_t* newfdi = res;
-	newfdi->reset();
+	auto newfdi = m_inspector->build_fdinfo();
 	bool do_add = true;
 
 	newfdi->m_type = fdi->type;
 	newfdi->m_openflags = 0;
 	newfdi->m_type = fdi->type;
-	newfdi->m_flags = sinsp_fdinfo_t::FLAGS_FROM_PROC;
+	newfdi->m_flags = sinsp_fdinfo::FLAGS_FROM_PROC;
 	newfdi->m_ino = fdi->ino;
 
 	switch(newfdi->m_type)
@@ -273,16 +273,16 @@ void sinsp_threadinfo::add_fd_from_scap(scap_fdinfo *fdi, OUT sinsp_fdinfo_t *re
 		newfdi->m_sockinfo.m_ipv4info.m_fields.m_l4proto = fdi->info.ipv4info.l4proto;
 		if(fdi->info.ipv4info.l4proto == SCAP_L4_TCP)
 		{
-			newfdi->m_flags |= sinsp_fdinfo_t::FLAGS_SOCKET_CONNECTED;
+			newfdi->m_flags |= sinsp_fdinfo::FLAGS_SOCKET_CONNECTED;
 		}
-		m_inspector->m_network_interfaces.update_fd(newfdi);
-		newfdi->m_name = ipv4tuple_to_string(&newfdi->m_sockinfo.m_ipv4info, m_inspector->m_hostname_and_port_resolution_enabled);
+		m_inspector->get_ifaddr_list().update_fd(*(newfdi.get()));
+		newfdi->m_name = ipv4tuple_to_string(&newfdi->m_sockinfo.m_ipv4info, m_inspector->is_hostname_and_port_resolution_enabled());
 		break;
 	case SCAP_FD_IPV4_SERVSOCK:
 		newfdi->m_sockinfo.m_ipv4serverinfo.m_ip = fdi->info.ipv4serverinfo.ip;
 		newfdi->m_sockinfo.m_ipv4serverinfo.m_port = fdi->info.ipv4serverinfo.port;
 		newfdi->m_sockinfo.m_ipv4serverinfo.m_l4proto = fdi->info.ipv4serverinfo.l4proto;
-		newfdi->m_name = ipv4serveraddr_to_string(&newfdi->m_sockinfo.m_ipv4serverinfo, m_inspector->m_hostname_and_port_resolution_enabled);
+		newfdi->m_name = ipv4serveraddr_to_string(&newfdi->m_sockinfo.m_ipv4serverinfo, m_inspector->is_hostname_and_port_resolution_enabled());
 
 		//
 		// We keep note of all the host bound server ports.
@@ -307,10 +307,10 @@ void sinsp_threadinfo::add_fd_from_scap(scap_fdinfo *fdi, OUT sinsp_fdinfo_t *re
 			newfdi->m_sockinfo.m_ipv4info.m_fields.m_l4proto = fdi->info.ipv6info.l4proto;
 			if(fdi->info.ipv6info.l4proto == SCAP_L4_TCP)
 			{
-				newfdi->m_flags |= sinsp_fdinfo_t::FLAGS_SOCKET_CONNECTED;
+				newfdi->m_flags |= sinsp_fdinfo::FLAGS_SOCKET_CONNECTED;
 			}
-			m_inspector->m_network_interfaces.update_fd(newfdi);
-			newfdi->m_name = ipv4tuple_to_string(&newfdi->m_sockinfo.m_ipv4info, m_inspector->m_hostname_and_port_resolution_enabled);
+			m_inspector->get_ifaddr_list().update_fd((*(newfdi.get())));
+			newfdi->m_name = ipv4tuple_to_string(&newfdi->m_sockinfo.m_ipv4info, m_inspector->is_hostname_and_port_resolution_enabled());
 		}
 		else
 		{
@@ -321,16 +321,16 @@ void sinsp_threadinfo::add_fd_from_scap(scap_fdinfo *fdi, OUT sinsp_fdinfo_t *re
 			newfdi->m_sockinfo.m_ipv6info.m_fields.m_l4proto = fdi->info.ipv6info.l4proto;
 			if(fdi->info.ipv6info.l4proto == SCAP_L4_TCP)
 			{
-				newfdi->m_flags |= sinsp_fdinfo_t::FLAGS_SOCKET_CONNECTED;
+				newfdi->m_flags |= sinsp_fdinfo::FLAGS_SOCKET_CONNECTED;
 			}
-			newfdi->m_name = ipv6tuple_to_string(&newfdi->m_sockinfo.m_ipv6info, m_inspector->m_hostname_and_port_resolution_enabled);
+			newfdi->m_name = ipv6tuple_to_string(&newfdi->m_sockinfo.m_ipv6info, m_inspector->is_hostname_and_port_resolution_enabled());
 		}
 		break;
 	case SCAP_FD_IPV6_SERVSOCK:
 		copy_ipv6_address(newfdi->m_sockinfo.m_ipv6serverinfo.m_ip.m_b, fdi->info.ipv6serverinfo.ip);
 		newfdi->m_sockinfo.m_ipv6serverinfo.m_port = fdi->info.ipv6serverinfo.port;
 		newfdi->m_sockinfo.m_ipv6serverinfo.m_l4proto = fdi->info.ipv6serverinfo.l4proto;
-		newfdi->m_name = ipv6serveraddr_to_string(&newfdi->m_sockinfo.m_ipv6serverinfo, m_inspector->m_hostname_and_port_resolution_enabled);
+		newfdi->m_name = ipv6serveraddr_to_string(&newfdi->m_sockinfo.m_ipv6serverinfo, m_inspector->is_hostname_and_port_resolution_enabled());
 
 		//
 		// We keep note of all the host bound server ports.
@@ -390,7 +390,7 @@ void sinsp_threadinfo::add_fd_from_scap(scap_fdinfo *fdi, OUT sinsp_fdinfo_t *re
 		return;
 	}
 
-	newfdi = m_fdtable.add(fdi->fd, newfdi);
+	auto addedfdi = m_fdtable.add(fdi->fd, std::move(newfdi));
 	if(m_inspector->m_filter != nullptr && m_inspector->is_capture())
 	{
 		// in case the inspector is configured with an internal filter, we can
@@ -413,15 +413,16 @@ void sinsp_threadinfo::add_fd_from_scap(scap_fdinfo *fdi, OUT sinsp_fdinfo_t *re
 		tscapevt.len = sizeof(scap_evt);
 
 		sinsp_evt tevt = {};
-		tevt.m_pevt = &tscapevt;
-		tevt.m_info = &(g_infotables.m_event_info[PPME_SYSCALL_READ_X]);
-		tevt.m_cpuid = 0;
-		tevt.m_evtnum = 0;
-		tevt.m_inspector = m_inspector;
-		tevt.m_tinfo = this;
-		tevt.m_fdinfo = newfdi;
-		int64_t tlefd = tevt.m_tinfo->m_lastevent_fd;
-		tevt.m_tinfo->m_lastevent_fd = fdi->fd;
+		tevt.set_scap_evt(&tscapevt);
+		tevt.set_info(&(g_infotables.m_event_info[PPME_SYSCALL_READ_X]));
+		tevt.set_cpuid(0);
+		tevt.set_num(0);
+		tevt.set_inspector(m_inspector);
+		tevt.set_tinfo(this);
+		tevt.set_fdinfo_ref(nullptr);
+		tevt.set_fd_info(addedfdi);
+		int64_t tlefd = tevt.get_tinfo()->m_lastevent_fd;
+		tevt.get_tinfo()->m_lastevent_fd = fdi->fd;
 
 		if(m_inspector->m_filter->run(&tevt))
 		{
@@ -437,7 +438,7 @@ void sinsp_threadinfo::add_fd_from_scap(scap_fdinfo *fdi, OUT sinsp_fdinfo_t *re
 			fdi->type = SCAP_FD_UNINITIALIZED;
 		}
 
-		tevt.m_tinfo->m_lastevent_fd = tlefd;
+		tevt.get_tinfo()->m_lastevent_fd = tlefd;
 		m_lastevent_data = NULL;
 	}
 }
@@ -459,7 +460,6 @@ void sinsp_threadinfo::init(scap_threadinfo* pi)
 	m_exe_writable = pi->exe_writable;
 	m_exe_upper_layer = pi->exe_upper_layer;
 	m_exe_from_memfd = pi->exe_from_memfd;
-	
 
 	/* We cannot obtain the reaper_tid from a /proc scan */
 	m_reaper_tid = -1;
@@ -469,12 +469,12 @@ void sinsp_threadinfo::init(scap_threadinfo* pi)
 	if(is_main_thread())
 	{
 		set_env(pi->env, pi->env_len);
-		set_cwd({pi->cwd});
+		update_cwd({pi->cwd});
 	}
 	m_flags |= pi->flags;
 	m_flags |= PPM_CL_ACTIVE; // Assume that all the threads coming from /proc are real, active threads
 	m_fdtable.clear();
-	m_fdtable.m_tid = m_tid;
+	m_fdtable.set_tid(m_tid);
 	m_fdlimit = pi->fdlimit;
 
 	m_cap_permitted = pi->cap_permitted;
@@ -516,7 +516,7 @@ void sinsp_threadinfo::set_user(uint32_t uid)
 	if (!user)
 	{
 		auto notify = m_inspector->is_live() || m_inspector->is_syscall_plugin();
-		user = m_inspector->m_usergroup_manager.add_user(m_container_id, m_pid, uid, m_group.gid, NULL, NULL, NULL, notify);
+		user = m_inspector->m_usergroup_manager.add_user(m_container_id, m_pid, uid, m_group.gid, {}, {}, {}, notify);
 	}
 	if (user)
 	{
@@ -538,7 +538,7 @@ void sinsp_threadinfo::set_group(uint32_t gid)
 	if (!group)
 	{
 		auto notify = m_inspector->is_live() || m_inspector->is_syscall_plugin();
-		group = m_inspector->m_usergroup_manager.add_group(m_container_id, m_pid, gid, NULL, notify);
+		group = m_inspector->m_usergroup_manager.add_group(m_container_id, m_pid, gid, {}, notify);
 	}
 	if (group)
 	{
@@ -790,7 +790,7 @@ sinsp_threadinfo* sinsp_threadinfo::get_parent_thread()
 	return m_inspector->get_thread_ref(m_ptid, false).get();
 }
 
-sinsp_fdinfo_t* sinsp_threadinfo::add_fd(int64_t fd, sinsp_fdinfo_t *fdinfo)
+sinsp_fdinfo* sinsp_threadinfo::add_fd(int64_t fd, std::unique_ptr<sinsp_fdinfo> fdinfo)
 {
 	sinsp_fdtable* fd_table_ptr = get_fd_table();
 	if(fd_table_ptr == NULL)
@@ -798,7 +798,7 @@ sinsp_fdinfo_t* sinsp_threadinfo::add_fd(int64_t fd, sinsp_fdinfo_t *fdinfo)
 		ASSERT(false);
 		return NULL;
 	}
-	sinsp_fdinfo_t* res = fd_table_ptr->add(fd, fdinfo);
+	auto* res = fd_table_ptr->add(fd, std::move(fdinfo));
 
 	//
 	// Update the last event fd. It's needed by the filtering engine
@@ -819,7 +819,7 @@ void sinsp_threadinfo::remove_fd(int64_t fd)
 	fd_table_ptr->erase(fd);
 }
 
-bool sinsp_threadinfo::loop_fds(sinsp_fdtable::fdtable_visitor_t visitor)
+bool sinsp_threadinfo::loop_fds(sinsp_fdtable::fdtable_const_visitor_t visitor)
 {
 	sinsp_fdtable* fdt = get_fd_table();
 	if(fdt == NULL)
@@ -828,68 +828,71 @@ bool sinsp_threadinfo::loop_fds(sinsp_fdtable::fdtable_visitor_t visitor)
 		return false;
 	}
 
-	return fdt->loop(visitor);
+	return fdt->const_loop(visitor);
 }
 
-bool sinsp_threadinfo::is_bound_to_port(uint16_t number)
+bool sinsp_threadinfo::is_bound_to_port(uint16_t number) const
 {
-	std::unordered_map<int64_t, sinsp_fdinfo_t>::iterator it;
-
-	sinsp_fdtable* fdt = get_fd_table();
+	const sinsp_fdtable* fdt = get_fd_table();
 	if(fdt == NULL)
 	{
 		ASSERT(false);
 		return false;
 	}
 
-	for(it = fdt->m_table.begin(); it != fdt->m_table.end(); ++it)
-	{
-		if(it->second.m_type == SCAP_FD_IPV4_SOCK)
+	bool ret = false;
+	fdt->const_loop([&](int64_t fd, const sinsp_fdinfo& fdi) {
+		if(fdi.m_type == SCAP_FD_IPV4_SOCK)
 		{
-			if(it->second.m_sockinfo.m_ipv4info.m_fields.m_dport == number)
+			if(fdi.m_sockinfo.m_ipv4info.m_fields.m_dport == number)
 			{
-				return true;
+				// set result and break out of the loop
+				ret = true;
+				return false;
 			}
 		}
-		else if(it->second.m_type == SCAP_FD_IPV4_SERVSOCK)
+		else if(fdi.m_type == SCAP_FD_IPV4_SERVSOCK)
 		{
-			if(it->second.m_sockinfo.m_ipv4serverinfo.m_port == number)
+			if(fdi.m_sockinfo.m_ipv4serverinfo.m_port == number)
 			{
-				return true;
+				// set result and break out of the loop
+				ret = true;
+				return false;
 			}
 		}
-	}
+		return true;
+	});
 
-	return false;
+	return ret;
 }
 
-bool sinsp_threadinfo::uses_client_port(uint16_t number)
+bool sinsp_threadinfo::uses_client_port(uint16_t number) const
 {
-	std::unordered_map<int64_t, sinsp_fdinfo_t>::iterator it;
-
-	sinsp_fdtable* fdt = get_fd_table();
+	const sinsp_fdtable* fdt = get_fd_table();
 	if(fdt == NULL)
 	{
 		ASSERT(false);
 		return false;
 	}
 
-	for(it = fdt->m_table.begin();
-		it != fdt->m_table.end(); ++it)
-	{
-		if(it->second.m_type == SCAP_FD_IPV4_SOCK)
+	bool ret = false;
+	fdt->const_loop([&](int64_t fd, const sinsp_fdinfo& fdi) {
+		if(fdi.m_type == SCAP_FD_IPV4_SOCK)
 		{
-			if(it->second.m_sockinfo.m_ipv4info.m_fields.m_sport == number)
+			if(fdi.m_sockinfo.m_ipv4info.m_fields.m_sport == number)
 			{
-				return true;
+				// set result and break out of the loop
+				ret = true;
+				return false;
 			}
 		}
-	}
+		return true;
+	});
 
-	return false;
+	return ret;
 }
 
-bool sinsp_threadinfo::is_lastevent_data_valid()
+bool sinsp_threadinfo::is_lastevent_data_valid() const
 {
 	return (m_lastevent_cpuid != (uint16_t) - 1);
 }
@@ -926,7 +929,7 @@ std::string sinsp_threadinfo::get_cwd()
 	}
 }
 
-void sinsp_threadinfo::set_cwd(std::string_view cwd)
+void sinsp_threadinfo::update_cwd(std::string_view cwd)
 {
 	sinsp_threadinfo* tinfo = get_main_thread();
 
@@ -995,7 +998,7 @@ uint64_t sinsp_threadinfo::get_fd_opencount() const
 	{
 		return 0;
 	}
-	return main_thread->m_fdtable.size();
+	return main_thread->get_fdtable().size();
 }
 
 uint64_t sinsp_threadinfo::get_fd_limit()
@@ -1141,7 +1144,7 @@ void sinsp_threadinfo::populate_cmdline(std::string &cmdline, const sinsp_thread
 	}
 }
 
-bool sinsp_threadinfo::is_health_probe()
+bool sinsp_threadinfo::is_health_probe() const
 {
 	return (m_category == sinsp_threadinfo::CAT_HEALTHCHECK ||
 		m_category == sinsp_threadinfo::CAT_LIVENESS_PROBE ||
@@ -1150,11 +1153,10 @@ bool sinsp_threadinfo::is_health_probe()
 
 std::string sinsp_threadinfo::get_path_for_dir_fd(int64_t dir_fd)
 {
-	sinsp_fdinfo_t* dir_fdinfo = get_fd(dir_fd);
+	sinsp_fdinfo* dir_fdinfo = get_fd(dir_fd);
 	if (!dir_fdinfo || dir_fdinfo->m_name.empty())
 	{
 #ifndef _WIN32 // we will have to implement this for Windows
-#ifdef HAS_CAPTURE
 		// Sad day; we don't have the directory in the tinfo's fd cache.
 		// Must manually look it up so we can resolve filenames correctly.
 		char proc_path[PATH_MAX];
@@ -1180,11 +1182,6 @@ std::string sinsp_threadinfo::get_path_for_dir_fd(int64_t dir_fd)
 		rel_path_base.append("/");
 		libsinsp_logger()->log(std::string("Translating to ") + rel_path_base);
 		return rel_path_base;
-#else
-		libsinsp_logger()->log("Can't translate working directory outside of live capture.",
-		             sinsp_logger::SEV_INFO);
-		return "";
-#endif
 #endif // _WIN32
 	}
 	return dir_fdinfo->m_name;
@@ -1315,8 +1312,7 @@ void sinsp_threadinfo::strvec_to_iovec(const std::vector<std::string> &strs,
 	}
 }
 
-
-void sinsp_threadinfo::fd_to_scap(scap_fdinfo *dst, sinsp_fdinfo_t* src)
+static void fd_to_scap(scap_fdinfo *dst, sinsp_fdinfo* src)
 {
 	dst->type = src->m_type;
 	dst->ino = src->m_ino;
@@ -1386,7 +1382,7 @@ void sinsp_threadinfo::fd_to_scap(scap_fdinfo *dst, sinsp_fdinfo_t* src)
 ///////////////////////////////////////////////////////////////////////////////
 sinsp_thread_manager::sinsp_thread_manager(sinsp* inspector)
 	: table(s_thread_table_name, sinsp_threadinfo().static_fields()),
-	  m_max_thread_table_size(m_thread_table_absolute_max_size)
+	  m_max_thread_table_size(m_thread_table_default_size)
 {
 	m_inspector = inspector;
 	clear();
@@ -1453,7 +1449,7 @@ void sinsp_thread_manager::create_thread_dependencies(const std::shared_ptr<sins
 	}
 
 	/* Assign the child to the parent for the first time, we are a thread
-	 * just created and we need to assign us to a parent. 
+	 * just created and we need to assign us to a parent.
 	 * Remember that in `/proc` scan the `ptid` is `ppid`.
 	 * If we don't find the parent in the table we can do nothing, so we consider
 	 * INIT as the new parent.
@@ -1476,35 +1472,38 @@ std::unique_ptr<sinsp_threadinfo> sinsp_thread_manager::new_threadinfo() const
 	return std::unique_ptr<sinsp_threadinfo>(tinfo);
 }
 
+std::unique_ptr<sinsp_fdinfo> sinsp_thread_manager::new_fdinfo() const
+{
+	return sinsp_fdtable(m_inspector).new_fdinfo();
+}
+
 /* Can be called when:
  * 1. We crafted a new event to create in clone parsers. (`from_scap_proctable==false`)
  * 2. We are doing a proc scan with a callback or without. (`from_scap_proctable==true`)
  * 3. We are trying to obtain thread info from /proc through `get_thread_ref`
  */
-bool sinsp_thread_manager::add_thread(sinsp_threadinfo *threadinfo, bool from_scap_proctable)
+std::shared_ptr<sinsp_threadinfo> sinsp_thread_manager::add_thread(std::unique_ptr<sinsp_threadinfo> threadinfo, bool from_scap_proctable)
 {
 
 	/* We have no more space */
 	if(m_threadtable.size() >= m_max_thread_table_size
-#if defined(HAS_CAPTURE)
 	   && threadinfo->m_pid != m_inspector->m_self_pid
-#endif
 	)
 	{
-		if (m_inspector != nullptr && m_inspector->m_sinsp_stats_v2)
+		if (m_inspector != nullptr && m_inspector->get_sinsp_stats_v2())
 		{
 			// rate limit messages to avoid spamming the logs
-			if (m_inspector->m_sinsp_stats_v2->m_n_drops_full_threadtable % m_max_thread_table_size == 0)
+			if (m_inspector->get_sinsp_stats_v2()->m_n_drops_full_threadtable % m_max_thread_table_size == 0)
 			{
 				libsinsp_logger()->format(sinsp_logger::SEV_INFO, "Thread table full, dropping tid %lu (pid %lu, comm \"%s\")",
 					threadinfo->m_tid, threadinfo->m_pid, threadinfo->m_comm.c_str());
 			}
-			m_inspector->m_sinsp_stats_v2->m_n_drops_full_threadtable++;
+			m_inspector->get_sinsp_stats_v2()->m_n_drops_full_threadtable++;
 		}
-		return false;
+		return nullptr;
 	}
 
-	auto tinfo_shared_ptr = std::shared_ptr<sinsp_threadinfo>(threadinfo);
+	auto tinfo_shared_ptr = std::shared_ptr<sinsp_threadinfo>(std::move(threadinfo));
 
 	if(!from_scap_proctable)
 	{
@@ -1521,14 +1520,14 @@ bool sinsp_thread_manager::add_thread(sinsp_threadinfo *threadinfo, bool from_sc
 	}
 
 	tinfo_shared_ptr->compute_program_hash();
-	m_threadtable.put(std::move(tinfo_shared_ptr));
+	m_threadtable.put(tinfo_shared_ptr);
 
-	if (m_inspector != nullptr && m_inspector->m_sinsp_stats_v2)
+	if (m_inspector != nullptr && m_inspector->get_sinsp_stats_v2())
 	{
-		m_inspector->m_sinsp_stats_v2->m_n_added_threads++;
+		m_inspector->get_sinsp_stats_v2()->m_n_added_threads++;
 	}
 
-	return true;
+	return tinfo_shared_ptr;
 }
 
 /* Taken from `find_new_reaper` kernel function:
@@ -1568,7 +1567,7 @@ sinsp_threadinfo* sinsp_thread_manager::find_new_reaper(sinsp_threadinfo* tinfo)
 	 * the current `tinfo` it is possible that we are not
 	 * able to detect the loop and we assign the wrong reaper.
 	 * By the way, this should never happen and this logic is here
-	 * just to avoid infinite loops, is not here to guarantee 100% 
+	 * just to avoid infinite loops, is not here to guarantee 100%
 	 * correctness.
 	 * We should never have a self-loop but if we have it
 	 * we break it and we return a `nullptr` as a reaper.
@@ -1590,7 +1589,7 @@ sinsp_threadinfo* sinsp_thread_manager::find_new_reaper(sinsp_threadinfo* tinfo)
 
 		/* The only possible case in which we break here is:
 		 * - the parent is not in a namespace while the child yes
-		 * 
+		 *
 		 * WARNING: this is a best-effort check, in sinsp we have no knowledge of
 		 * namespace level so it's possible that the parent is in a different namespace causing
 		 * a container escape! We are not able to detect it with the actual info.
@@ -1600,7 +1599,7 @@ sinsp_threadinfo* sinsp_thread_manager::find_new_reaper(sinsp_threadinfo* tinfo)
 			break;
 		}
 
-		if(parent_tinfo->m_tginfo != nullptr && 
+		if(parent_tinfo->m_tginfo != nullptr &&
 			parent_tinfo->m_tginfo->is_reaper() &&
 			parent_tinfo->m_tginfo->get_thread_count() > 0)
 		{
@@ -1619,7 +1618,7 @@ sinsp_threadinfo* sinsp_thread_manager::find_new_reaper(sinsp_threadinfo* tinfo)
 		}
 		parent_tinfo = parent_tinfo->get_parent_thread();
 	}
-	
+
 	return nullptr;
 }
 
@@ -1627,7 +1626,7 @@ void sinsp_thread_manager::remove_main_thread_fdtable(sinsp_threadinfo* main_thr
 {
 	///todo(@Andreagit97): all this logic is useful only if we have a `m_fd_listener`
 	///we could avoid it if not present.
-	
+
 	/* Please note that the main thread is not always here, it is possible
 	 * that for some reason we lose it!
 	 */
@@ -1635,34 +1634,32 @@ void sinsp_thread_manager::remove_main_thread_fdtable(sinsp_threadinfo* main_thr
 	{
 		return;
 	}
-	
+
 	sinsp_fdtable* fd_table_ptr = main_thread->get_fd_table();
 	if(fd_table_ptr == nullptr)
 	{
 		return;
 	}
 
-	std::unordered_map<int64_t, sinsp_fdinfo_t>* fdtable = &(fd_table_ptr->m_table);
-
 	erase_fd_params eparams;
 	eparams.m_remove_from_table = false;
 	eparams.m_tinfo = main_thread;
-	eparams.m_ts = m_inspector->m_lastevent_ts;
+	eparams.m_ts = m_inspector->get_lastevent_ts();
 
-	for(auto fdit = fdtable->begin(); fdit != fdtable->end(); ++fdit)
-	{
-		eparams.m_fd = fdit->first;
+	fd_table_ptr->loop([&](int64_t fd, sinsp_fdinfo& fdinfo) {
+		eparams.m_fd = fd;
 
 		//
 		// The canceled fd should always be deleted immediately, so if it appears
 		// here it means we have a problem.
 		//
 		ASSERT(eparams.m_fd != CANCELED_FD_NUMBER);
-		eparams.m_fdinfo = &(fdit->second);
+		eparams.m_fdinfo = &fdinfo;
 
 		/* Here we are just calling the `on_erase` callback */
-		m_inspector->m_parser->erase_fd(&eparams);
-	}
+		m_inspector->get_parser()->erase_fd(&eparams);
+		return true;
+	});
 }
 
 void sinsp_thread_manager::remove_thread(int64_t tid)
@@ -1673,9 +1670,9 @@ void sinsp_thread_manager::remove_thread(int64_t tid)
 	if(thread_to_remove == nullptr)
 	{
 		// Extra m_inspector nullptr check
-		if (m_inspector != nullptr && m_inspector->m_sinsp_stats_v2)
+		if (m_inspector != nullptr && m_inspector->get_sinsp_stats_v2())
 		{
-			m_inspector->m_sinsp_stats_v2->m_n_failed_thread_lookups++;
+			m_inspector->get_sinsp_stats_v2()->m_n_failed_thread_lookups++;
 		}
 		return;
 	}
@@ -1712,12 +1709,12 @@ void sinsp_thread_manager::remove_thread(int64_t tid)
 	 *   - Reaper -1 means that we cannot find the correct reaper info in the kernel due
 	 *     to BPF verifier limits. In this case, we will use our userspace logic to find a reaper.
 	 *   - Reaper > 0 means the kernel sent us a valid reaper we will use it if present in our thread table.
-	 * 	   If not present we will use our userspace logic.	
+	 * 	   If not present we will use our userspace logic.
 	 * 3. We receive an old version of the PROC_EXIT event without reaper info. In this case,
 	 *    we use our userspace logic.
 	 * 4. We lost the PROC_EXIT event, so we are here because the purging logic called us. Also
 	 *    in this case we use our userspace logic.
-	 * 
+	 *
 	 * So excluding the case in which the kernel sent us a valid reaper we always fallback to
 	 * our userspace logic.
 	 */
@@ -1795,9 +1792,9 @@ void sinsp_thread_manager::remove_thread(int64_t tid)
 	 * the cache just to be sure.
 	 */
 	m_last_tid = -1;
-	if (m_inspector != nullptr && m_inspector->m_sinsp_stats_v2)
+	if (m_inspector != nullptr && m_inspector->get_sinsp_stats_v2())
 	{
-		m_inspector->m_sinsp_stats_v2->m_n_removed_threads++;
+		m_inspector->get_sinsp_stats_v2()->m_n_removed_threads++;
 	}
 }
 
@@ -1926,7 +1923,7 @@ void sinsp_thread_manager::dump_threads_to_file(scap_dumper_t* dumper)
 						  tinfo.m_exepath.c_str(),
 						  args_iov, argscnt,
 						  envs_iov, envscnt,
-						  (tinfo.m_cwd == "" ? "/" : tinfo.m_cwd.c_str()),
+						  (tinfo.get_cwd() == "" ? "/" : tinfo.get_cwd().c_str()),
 						  cgroups_iov, cgroupscnt,
 						  tinfo.m_root.c_str()) != SCAP_SUCCESS)
 		{
@@ -1979,10 +1976,8 @@ void sinsp_thread_manager::dump_threads_to_file(scap_dumper_t* dumper)
 				return false;
 			}
 
-			std::unordered_map<int64_t, sinsp_fdinfo_t>& fdtable = fd_table_ptr->m_table;
-
-			for(auto it = fdtable.begin(); it != fdtable.end(); ++it)
-			{
+			bool should_exit = false;
+			fd_table_ptr->loop([&](int64_t fd, sinsp_fdinfo& info) {
 				//
 				// Allocate the scap fd info
 				//
@@ -1990,14 +1985,15 @@ void sinsp_thread_manager::dump_threads_to_file(scap_dumper_t* dumper)
 				if(scfdinfo == NULL)
 				{
 					scap_fd_free_proc_fd_table(&sctinfo);
+					should_exit = true;
 					return false;
 				}
 
 				//
 				// Populate the fd info
 				//
-				scfdinfo->fd = it->first;
-				tinfo.fd_to_scap(scfdinfo, &it->second);
+				scfdinfo->fd = fd;
+				fd_to_scap(scfdinfo, &info);
 
 				//
 				// Add the new fd to the scap table.
@@ -2007,6 +2003,13 @@ void sinsp_thread_manager::dump_threads_to_file(scap_dumper_t* dumper)
 					scap_fd_free_proc_fd_table(&sctinfo);
 					throw sinsp_exception("Failed to add fd to hash table");
 				}
+
+				return true;
+			});
+
+			if (should_exit)
+			{
+				return false;
 			}
 		}
 
@@ -2028,16 +2031,12 @@ threadinfo_map_t::ptr_t sinsp_thread_manager::get_thread_ref(int64_t tid, bool q
     auto sinsp_proc = find_thread(tid, lookup_only);
 
     if(!sinsp_proc && query_os_if_not_found &&
-       (m_threadtable.size() < m_max_thread_table_size
-#if defined(HAS_CAPTURE)
-	|| tid == m_inspector->m_self_pid
-#endif
-	))
+       (m_threadtable.size() < m_max_thread_table_size || tid == m_inspector->m_self_pid))
     {
         // Certain code paths can lead to this point from scap_open() (incomplete example:
         // scap_proc_scan_proc_dir() -> resolve_container() -> get_env()). Adding a
         // defensive check here to protect both, callers of get_env and get_thread.
-        if (!m_inspector->m_h)
+        if (!m_inspector->get_scap_handle())
         {
             libsinsp_logger()->format(sinsp_logger::SEV_INFO, "%s: Unable to complete for tid=%"
                             PRIu64 ": sinsp::scap_t* is uninitialized", __func__, tid);
@@ -2056,7 +2055,7 @@ threadinfo_map_t::ptr_t sinsp_thread_manager::get_thread_ref(int64_t tid, bool q
         scap_proc.ptid = -1;
 
 		// unfortunately, sinsp owns the threade factory
-        sinsp_threadinfo* newti = m_inspector->build_threadinfo();
+        auto newti = m_inspector->build_threadinfo();
 
         m_n_proc_lookups++;
 
@@ -2087,16 +2086,12 @@ threadinfo_map_t::ptr_t sinsp_thread_manager::get_thread_ref(int64_t tid, bool q
                 }
             }
 
-#ifdef HAS_ANALYZER
             uint64_t ts = sinsp_utils::get_current_time_ns();
-#endif
             if(scap_proc_get(m_inspector->get_scap_platform(), tid, &scap_proc, scan_sockets) == SCAP_SUCCESS)
-	    {
-		have_scap_proc = true;
-	    }
-#ifdef HAS_ANALYZER
+            {
+                have_scap_proc = true;
+            }
             m_n_proc_lookups_duration_ns += sinsp_utils::get_current_time_ns() - ts;
-#endif
         }
 
         if(have_scap_proc)
@@ -2123,7 +2118,7 @@ threadinfo_map_t::ptr_t sinsp_thread_manager::get_thread_ref(int64_t tid, bool q
         //
         // Done. Add the new thread to the list.
         //
-        add_thread(newti, false);
+        add_thread(std::move(newti), false);
         sinsp_proc = find_thread(tid, lookup_only);
     }
 
@@ -2142,9 +2137,9 @@ threadinfo_map_t::ptr_t sinsp_thread_manager::find_thread(int64_t tid, bool look
 		thr = m_last_tinfo.lock();
 		if (thr)
 		{
-			if (m_inspector != nullptr && m_inspector->m_sinsp_stats_v2)
+			if (m_inspector != nullptr && m_inspector->get_sinsp_stats_v2())
 			{
-				m_inspector->m_sinsp_stats_v2->m_n_cached_thread_lookups++;
+				m_inspector->get_sinsp_stats_v2()->m_n_cached_thread_lookups++;
 			}
 			// This allows us to avoid performing an actual timestamp lookup
 			// for something that may not need to be precise
@@ -2160,9 +2155,9 @@ threadinfo_map_t::ptr_t sinsp_thread_manager::find_thread(int64_t tid, bool look
 
 	if(thr)
 	{
-		if (m_inspector != nullptr && m_inspector->m_sinsp_stats_v2)
+		if (m_inspector != nullptr && m_inspector->get_sinsp_stats_v2())
 		{
-			m_inspector->m_sinsp_stats_v2->m_n_noncached_thread_lookups++;
+			m_inspector->get_sinsp_stats_v2()->m_n_noncached_thread_lookups++;
 		}
 		if(!lookup_only)
 		{
@@ -2175,9 +2170,9 @@ threadinfo_map_t::ptr_t sinsp_thread_manager::find_thread(int64_t tid, bool look
 	}
 	else
 	{
-		if (m_inspector != nullptr && m_inspector->m_sinsp_stats_v2)
+		if (m_inspector != nullptr && m_inspector->get_sinsp_stats_v2())
 		{
-			m_inspector->m_sinsp_stats_v2->m_n_failed_thread_lookups++;
+			m_inspector->get_sinsp_stats_v2()->m_n_failed_thread_lookups++;
 		}
 		return NULL;
 	}
@@ -2185,7 +2180,7 @@ threadinfo_map_t::ptr_t sinsp_thread_manager::find_thread(int64_t tid, bool look
 
 void sinsp_thread_manager::set_max_thread_table_size(uint32_t value)
 {
-    m_max_thread_table_size = std::min(value, m_thread_table_absolute_max_size);
+    m_max_thread_table_size = value;
 }
 
 std::unique_ptr<libsinsp::state::table_entry> sinsp_thread_manager::new_entry() const

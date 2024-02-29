@@ -20,26 +20,29 @@ limitations under the License.
 #include <cstdlib>
 #include <sstream>
 
-#include <ppm_events_public.h>
+#include <driver/ppm_events_public.h>
 
 #include "test_plugins.h"
+#include <scap.h>
 
 /**
  * Example of plugin implementing only the event sourcing capability, which:
  * - Does not implement a specific event source, thus can create any syscall event
- * - Sources events of type PPME_SYSCALL_OPEN_X 
+ * - Sources events of type PPME_SYSCALL_OPEN_X
  */
-typedef struct plugin_state
+struct plugin_state
 {
     std::string lasterr;
-} plugin_state;
+    ss_plugin_owner_t* owner;
+    ss_plugin_log_fn_t log;
+};
 
-typedef struct instance_state
+struct instance_state
 {
     uint64_t count;
     uint8_t evt_buf[2048];
     ss_plugin_event* evt;
-} instance_state;
+};
 
 static const char* plugin_get_required_api_version()
 {
@@ -73,12 +76,23 @@ static const char* plugin_get_last_error(ss_plugin_t* s)
 
 static ss_plugin_t* plugin_init(const ss_plugin_init_input* in, ss_plugin_rc* rc)
 {
+    plugin_state *ret = new plugin_state();
+
+    //save logger and owner in the state
+    ret->log = in->log_fn;
+    ret->owner = in->owner;
+
+    ret->log(ret->owner, NULL, "initializing plugin...", SS_PLUGIN_LOG_SEV_INFO);
+
     *rc = SS_PLUGIN_SUCCESS;
-    return new plugin_state();
+    return ret;
 }
 
 static void plugin_destroy(ss_plugin_t* s)
 {
+    plugin_state *ps = (plugin_state *) s;
+    ps->log(ps->owner, NULL, "destroying plugin...", SS_PLUGIN_LOG_SEV_INFO);
+
     delete ((plugin_state *) s);
 }
 
@@ -114,43 +128,21 @@ static ss_plugin_rc plugin_next_batch(ss_plugin_t* s, ss_instance_t* i, uint32_t
 
     *nevts = 1;
     *evts = &istate->evt;
-    istate->evt->type = PPME_SYSCALL_OPEN_X;
+
+    char error[SCAP_LASTERR_SIZE];
+
+    int32_t encode_res = scap_event_encode_params(scap_sized_buffer{istate->evt, sizeof(istate->evt_buf)},
+        nullptr, error, PPME_SYSCALL_OPEN_X, 6,
+        (uint64_t) 3, "/tmp/the_file", ((1 << 0) | (1 << 1)), 0, 5, (uint64_t) 123);
+
+    if (encode_res == SCAP_FAILURE)
+    {
+        return SS_PLUGIN_FAILURE;
+    }
+
     istate->evt->tid = 1;
     istate->evt->ts = UINT64_MAX;
-    istate->evt->len = sizeof(ss_plugin_event);
-    istate->evt->nparams = 6;
 
-    uint8_t* parambuf = &istate->evt_buf[0] + sizeof(ss_plugin_event);
-
-    // lenghts
-    *((uint16_t*) parambuf) = sizeof(uint64_t);
-    parambuf += sizeof(uint16_t);
-    *((uint16_t*) parambuf) = strlen("/tmp/the_file") + 1;
-    parambuf += sizeof(uint16_t);
-    *((uint16_t*) parambuf) = sizeof(uint32_t);
-    parambuf += sizeof(uint16_t);
-    *((uint16_t*) parambuf) = sizeof(uint32_t);
-    parambuf += sizeof(uint16_t);
-    *((uint16_t*) parambuf) = sizeof(uint32_t);
-    parambuf += sizeof(uint16_t);
-    *((uint16_t*) parambuf) = sizeof(uint64_t);
-    parambuf += sizeof(uint16_t);
-
-    // params
-    *((uint64_t*) parambuf) = 3;
-    parambuf += sizeof(uint64_t);
-    strcpy((char*) parambuf, "/tmp/the_file");
-    parambuf += strlen("/tmp/the_file") + 1;
-    *((uint32_t*) parambuf) = ((1 << 0) | (1 << 1));
-    parambuf += sizeof(uint32_t);
-    *((uint32_t*) parambuf) = 0;
-    parambuf += sizeof(uint32_t);
-    *((uint32_t*) parambuf) = 5;
-    parambuf += sizeof(uint32_t);
-    *((uint64_t*) parambuf) = 123;
-    parambuf += sizeof(uint64_t);
-
-    istate->evt->len += parambuf - (&istate->evt_buf[0] + sizeof(ss_plugin_event));
     istate->count--;
     return SS_PLUGIN_SUCCESS;
 }

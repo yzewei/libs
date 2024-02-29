@@ -18,9 +18,6 @@
 option(USE_BUNDLED_DEPS "Enable bundled dependencies instead of using the system ones" ON)
 
 if(NOT MSVC)
-	if(CMAKE_SYSTEM_NAME MATCHES "Linux")
-		add_definitions(-DHAS_CAPTURE)
-	endif()
 	add_definitions(-DHAVE_PWD_H)
 	add_definitions(-DHAVE_GRP_H)
 	if(MUSL_OPTIMIZED_BUILD)
@@ -96,12 +93,11 @@ add_library(sinsp
 	sinsp_filtercheck_user.cpp
 	sinsp_filtercheck_utils.cpp
 	filter_check_list.cpp
-	gen_filter.cpp
 	ifinfo.cpp
 	memmem.cpp
 	logger.cpp
 	parsers.cpp
-	../plugin/plugin_loader.c
+	${LIBS_DIR}/userspace/plugin/plugin_loader.c
 	plugin.cpp
 	plugin_table_api.cpp
 	plugin_filtercheck.cpp
@@ -128,12 +124,12 @@ endif()
 if(WITH_CHISEL)
 	target_sources(sinsp
 	PRIVATE
-		../chisel/chisel_api.cpp
-		../chisel/chisel_fields_info.cpp
-		../chisel/chisel_utils.cpp
-		../chisel/chisel.cpp
-		../chisel/chisel_viewinfo.cpp
-		../chisel/chisel_table.cpp
+		${LIBS_DIR}/userspace/chisel/chisel_api.cpp
+		${LIBS_DIR}/userspace/chisel/chisel_fields_info.cpp
+		${LIBS_DIR}/userspace/chisel/chisel_utils.cpp
+		${LIBS_DIR}/userspace/chisel/chisel.cpp
+		${LIBS_DIR}/userspace/chisel/chisel_viewinfo.cpp
+		${LIBS_DIR}/userspace/chisel/chisel_table.cpp
 	)
 endif()
 
@@ -171,13 +167,10 @@ endif()
 
 target_include_directories(sinsp
 PUBLIC
-	${CMAKE_CURRENT_SOURCE_DIR}
-	${CMAKE_CURRENT_SOURCE_DIR}/../plugin
+	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+	$<BUILD_INTERFACE:${LIBS_DIR}/userspace>
+	$<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/include/${LIBS_PACKAGE_NAME}>
 )
-
-if(WITH_CHISEL)
-	target_include_directories(sinsp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../chisel)
-endif()
 
 if (EMSCRIPTEN)
 	target_compile_options(sinsp PRIVATE "-sDISABLE_EXCEPTION_CATCHING=0")
@@ -239,7 +232,10 @@ function(prepare_cri_grpc api_version)
 			COMMAND ${PROTOC} -I ${CMAKE_CURRENT_BINARY_DIR} --grpc_out=. --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN} ${CMAKE_CURRENT_BINARY_DIR}/cri-${api_version}.proto
 			WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 	add_library(cri_${api_version} STATIC ${CMAKE_CURRENT_BINARY_DIR}/cri-${api_version}.pb.cc ${CMAKE_CURRENT_BINARY_DIR}/cri-${api_version}.grpc.pb.cc)
-	target_include_directories(cri_${api_version} PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+	target_include_directories(cri_${api_version}
+	PUBLIC
+		$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
+	)
 	add_dependencies(cri_${api_version} grpc)
 endfunction()
 
@@ -370,9 +366,7 @@ endforeach()
 # Build our pkg-config "Cflags:" flags.
 set(SINSP_PKG_CONFIG_INCLUDES "")
 foreach(sinsp_include_directory ${LIBSINSP_INCLUDE_DIRS})
-	if(NOT sinsp_include_directory MATCHES "(^${PROJECT_SOURCE_DIR}|^${PROJECT_BINARY_DIR})")
-		list(APPEND SINSP_PKG_CONFIG_INCLUDES -I${sinsp_include_directory})
-	endif()
+	list(APPEND SINSP_PKG_CONFIG_INCLUDES -I${sinsp_include_directory})
 endforeach()
 
 string(REPLACE ";" " " SINSP_PKG_CONFIG_LIBS "${SINSP_PKG_CONFIG_LIBS}")

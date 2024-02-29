@@ -19,26 +19,24 @@ limitations under the License.
 #include <algorithm>
 
 #if !defined(MINIMAL_BUILD) && !defined(__EMSCRIPTEN__)
-#ifdef HAS_CAPTURE
-#include "container_engine/cri.h"
-#endif // HAS_CAPTURE
+#include <libsinsp/container_engine/cri.h>
 #ifndef _WIN32
-#include "container_engine/docker/docker_linux.h"
-#include "container_engine/docker/podman.h"
+#include <libsinsp/container_engine/docker/docker_linux.h>
+#include <libsinsp/container_engine/docker/podman.h>
 #endif
-#include "container_engine/rkt.h"
-#include "container_engine/libvirt_lxc.h"
-#include "container_engine/lxc.h"
-#include "container_engine/mesos.h"
-#include "container_engine/bpm.h"
+#include <libsinsp/container_engine/rkt.h>
+#include <libsinsp/container_engine/libvirt_lxc.h>
+#include <libsinsp/container_engine/lxc.h>
+#include <libsinsp/container_engine/mesos.h>
+#include <libsinsp/container_engine/bpm.h>
 #endif // MINIMAL_BUILD
-#include "container_engine/static_container.h"
+#include <libsinsp/container_engine/static_container.h>
 
-#include "sinsp.h"
-#include "sinsp_int.h"
-#include "container.h"
-#include "utils.h"
-#include "sinsp_observer.h"
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
+#include <libsinsp/container.h>
+#include <libsinsp/utils.h>
+#include <libsinsp/sinsp_observer.h>
 
 using namespace libsinsp;
 
@@ -59,15 +57,15 @@ bool sinsp_container_manager::remove_inactive_containers()
 
 	if(m_last_flush_time_ns == 0)
 	{
-		m_last_flush_time_ns = m_inspector->m_lastevent_ts - m_inspector->m_inactive_container_scan_time_ns + 30 * ONE_SECOND_IN_NS;
+		m_last_flush_time_ns = m_inspector->get_lastevent_ts() - m_inspector->m_containers_purging_scan_time_ns + 30 * ONE_SECOND_IN_NS;
 	}
 
-	if(m_inspector->m_lastevent_ts >
-		m_last_flush_time_ns + m_inspector->m_inactive_container_scan_time_ns)
+	if(m_inspector->get_lastevent_ts() >
+		m_last_flush_time_ns + m_inspector->m_containers_purging_scan_time_ns)
 	{
 		res = true;
 
-		m_last_flush_time_ns = m_inspector->m_lastevent_ts;
+		m_last_flush_time_ns = m_inspector->get_lastevent_ts();
 
 		libsinsp_logger()->format(sinsp_logger::SEV_INFO, "Flushing container table");
 
@@ -84,22 +82,22 @@ bool sinsp_container_manager::remove_inactive_containers()
 		});
 
 		auto containers = m_containers.lock();
-		if (m_inspector != nullptr && m_inspector->m_sinsp_stats_v2)
+		if (m_inspector != nullptr && m_inspector->get_sinsp_stats_v2())
 		{
-			m_inspector->m_sinsp_stats_v2->m_n_missing_container_images = 0;
+			m_inspector->get_sinsp_stats_v2()->m_n_missing_container_images = 0;
 			// Will include pod sanboxes, but that's ok
-			m_inspector->m_sinsp_stats_v2->m_n_containers = containers->size();
+			m_inspector->get_sinsp_stats_v2()->m_n_containers = containers->size();
 		}
 		for(auto it = containers->begin(); it != containers->end();)
 		{
 			sinsp_container_info::ptr_t container = it->second;
-			if (m_inspector != nullptr && m_inspector->m_sinsp_stats_v2)
+			if (m_inspector != nullptr && m_inspector->get_sinsp_stats_v2())
 			{
 				auto container_info = container.get();
 				if (!container_info || (container_info && !container_info->m_is_pod_sandbox && container_info->m_image.empty()))
 				{
 					// Only count missing container images and exclude sandboxes
-					m_inspector->m_sinsp_stats_v2->m_n_missing_container_images++;
+					m_inspector->get_sinsp_stats_v2()->m_n_missing_container_images++;
 				}
 			}
 			if(containers_in_use.find(it->first) == containers_in_use.end())
@@ -267,30 +265,30 @@ bool sinsp_container_manager::container_to_sinsp_event(const std::string& json, 
 {
 	size_t totlen = sizeof(scap_evt) + sizeof(uint32_t) + json.length() + 1;
 
-	ASSERT(evt->m_pevt_storage == nullptr);
-	evt->m_pevt_storage = new char[totlen];
-	evt->m_pevt = (scap_evt *) evt->m_pevt_storage;
+	ASSERT(evt->get_scap_evt_storage() == nullptr);
+	evt->set_scap_evt_storage(new char[totlen]);
+	evt->set_scap_evt((scap_evt *) evt->get_scap_evt_storage());
 
-	evt->m_cpuid = 0;
-	evt->m_evtnum = 0;
-	evt->m_inspector = m_inspector;
+	evt->set_cpuid(0);
+	evt->set_num(0);
+	evt->set_inspector(m_inspector);
 
-	scap_evt* scapevt = evt->m_pevt;
+	scap_evt* scapevt = evt->get_scap_evt();
 	scapevt->ts = (uint64_t) - 1;
 	scapevt->tid = -1;
 	scapevt->len = (uint32_t)totlen;
 	scapevt->type = PPME_CONTAINER_JSON_2_E;
 	scapevt->nparams = 1;
 
-	uint32_t* lens = (uint32_t*)((char *)scapevt + sizeof(struct ppm_evt_hdr));
+	uint32_t* lens = (uint32_t*)((char *)scapevt + sizeof(ppm_evt_hdr));
 	char* valptr = (char*)lens + sizeof(uint32_t);
 
 	*lens = (uint32_t)json.length() + 1;
 	memcpy(valptr, json.c_str(), *lens);
 
 	evt->init();
-	evt->m_tinfo_ref = tinfo;
-	evt->m_tinfo = tinfo.get();
+	evt->set_tinfo_ref(tinfo);
+	evt->set_tinfo(tinfo.get());
 
 	return true;
 }
@@ -396,7 +394,7 @@ void sinsp_container_manager::dump_containers(sinsp_dumper& dumper)
 		sinsp_evt evt;
 		if(container_to_sinsp_event(container_to_json(*it.second), &evt, it.second->get_tinfo(m_inspector)))
 		{
-			evt.m_pevt->ts = m_inspector->get_new_ts();
+			evt.get_scap_evt()->ts = m_inspector->get_new_ts();
 			dumper.dump(&evt);
 		}
 	}
@@ -584,7 +582,6 @@ void sinsp_container_manager::create_engines()
 		m_container_engine_by_type[CT_DOCKER] = docker_engine;
 	}
 
-#if defined(HAS_CAPTURE)
 	if (m_container_engine_mask &
 	   ((1 << CT_CRI) |
 	    (1 << CT_CRIO) |
@@ -596,7 +593,6 @@ void sinsp_container_manager::create_engines()
 		m_container_engine_by_type[CT_CRIO] = cri_engine;
 		m_container_engine_by_type[CT_CONTAINERD] = cri_engine;
 	}
-#endif
 	if (m_container_engine_mask & (1 << CT_LXC))
 	{
 		auto lxc_engine = std::make_shared<container_engine::lxc>(*this);
@@ -660,7 +656,7 @@ void sinsp_container_manager::cleanup()
 
 void sinsp_container_manager::set_docker_socket_path(std::string socket_path)
 {
-#if !defined(MINIMAL_BUILD) && defined(HAS_CAPTURE) && !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+#if !defined(MINIMAL_BUILD) && !defined(_WIN32) && !defined(__EMSCRIPTEN__)
 	libsinsp::container_engine::docker_linux::set_docker_sock(std::move(socket_path));
 #endif
 }
@@ -674,35 +670,35 @@ void sinsp_container_manager::set_query_docker_image_info(bool query_image_info)
 
 void sinsp_container_manager::set_cri_extra_queries(bool extra_queries)
 {
-#if !defined(MINIMAL_BUILD) && defined(HAS_CAPTURE) && !defined(__EMSCRIPTEN__)
+#if !defined(MINIMAL_BUILD) && !defined(__EMSCRIPTEN__)
 	libsinsp::container_engine::cri::set_extra_queries(extra_queries);
 #endif
 }
 
 void sinsp_container_manager::set_cri_socket_path(const std::string &path)
 {
-#if !defined(MINIMAL_BUILD) && defined(HAS_CAPTURE) && !defined(__EMSCRIPTEN__)
+#if !defined(MINIMAL_BUILD) && !defined(__EMSCRIPTEN__)
 	libsinsp::container_engine::cri::set_cri_socket_path(path);
 #endif
 }
 
 void sinsp_container_manager::add_cri_socket_path(const std::string &path)
 {
-#if !defined(MINIMAL_BUILD) && defined(HAS_CAPTURE) && !defined(__EMSCRIPTEN__)
+#if !defined(MINIMAL_BUILD) && !defined(__EMSCRIPTEN__)
 	libsinsp::container_engine::cri::add_cri_socket_path(path);
 #endif
 }
 
 void sinsp_container_manager::set_cri_timeout(int64_t timeout_ms)
 {
-#if !defined(MINIMAL_BUILD) && defined(HAS_CAPTURE) && !defined(__EMSCRIPTEN__)
+#if !defined(MINIMAL_BUILD) && !defined(__EMSCRIPTEN__)
 	libsinsp::container_engine::cri::set_cri_timeout(timeout_ms);
 #endif
 }
 
 void sinsp_container_manager::set_cri_async(bool async)
 {
-#if !defined(MINIMAL_BUILD) && defined(HAS_CAPTURE) && !defined(__EMSCRIPTEN__)
+#if !defined(MINIMAL_BUILD) && !defined(__EMSCRIPTEN__)
 	libsinsp::container_engine::cri::set_async(async);
 #endif
 }
@@ -711,4 +707,3 @@ void sinsp_container_manager::set_container_labels_max_len(uint32_t max_label_le
 {
 	sinsp_container_info::m_container_label_max_length = max_label_len;
 }
-

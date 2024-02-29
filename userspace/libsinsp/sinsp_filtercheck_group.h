@@ -18,7 +18,7 @@ limitations under the License.
 
 #pragma once
 
-#include "sinsp_filtercheck.h"
+#include <libsinsp/sinsp_filtercheck.h>
 
 class sinsp_filter_check_group : public sinsp_filter_check
 {
@@ -30,10 +30,10 @@ public:
 	};
 
 	sinsp_filter_check_group();
+	virtual ~sinsp_filter_check_group() = default;
 
-	sinsp_filter_check* allocate_new() override;
+	std::unique_ptr<sinsp_filter_check> allocate_new() override;
+
+protected:
 	uint8_t* extract(sinsp_evt*, OUT uint32_t* len, bool sanitize_strings = true) override;
-
-	uint32_t m_gid;
-	std::string m_name;
 };

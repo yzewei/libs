@@ -649,6 +649,37 @@ int val_to_ring(struct event_filler_arguments *args, uint64_t val, uint32_t val_
 		}
 		else
 		{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 3, 0)
+			// strscpy is available since kernel 4.3.0: https://github.com/torvalds/linux/commit/30035e45753b708e7d47a98398500ca005e02b86
+			len = (int)strscpy(args->buffer + args->arg_data_offset,
+							(const char *)(unsigned long)val,
+							max_arg_size);
+			/* WARNING: `strscpy` returns the length of the string it creates or -E2BIG in case
+			 * the resulting string would not fit inside the destination string.
+			 * (see https://elixir.bootlin.com/linux/latest/source/lib/string.c#L122 and
+			 * https://lwn.net/Articles/659214/)
+			 *
+			 * The copied string is always null terminated but the returned `len` doesn't
+			 * take account for it.
+			 *
+			 * Two possible cases here:
+			 *
+			 * 1. `len < max_arg_size`, the terminator is always there, but `len` doesn't take it into account,
+			 *    so we need to increment the `len`.
+			 *
+			 * 2. `len == -E2BIG`, the source string is >= than `max_arg_size`. `strscpy` copied
+			 *    `max_arg_size - 1` and added the `\0` at the end, so our final copied `len` is `max_arg_size`.
+			 */
+			if (len == -E2BIG)
+			{
+				len = max_arg_size;
+			}
+			else
+			{
+				len++;
+			}
+#else
+			// Use old `strlcpy`.
 			len = (int)strlcpy(args->buffer + args->arg_data_offset,
 							(const char *)(unsigned long)val,
 							max_arg_size);
@@ -672,6 +703,7 @@ int val_to_ring(struct event_filler_arguments *args, uint64_t val, uint32_t val_
 			{
 				len = max_arg_size;
 			}
+#endif
 		}
 		break;
 

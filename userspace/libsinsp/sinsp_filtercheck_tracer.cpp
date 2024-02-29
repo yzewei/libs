@@ -18,11 +18,10 @@ limitations under the License.
 
 #include <math.h>
 
-#include "sinsp_filtercheck_tracer.h"
-#include "sinsp_filtercheck_reference.h"
-#include "sinsp.h"
-#include "sinsp_int.h"
-#include "strl.h"
+#include <libsinsp/sinsp_filtercheck_tracer.h>
+#include <libsinsp/sinsp.h>
+#include <libsinsp/sinsp_int.h>
+#include <libscap/strl.h>
 
 using namespace std;
 
@@ -65,15 +64,14 @@ sinsp_filter_check_tracer::sinsp_filter_check_tracer()
 	m_info.m_desc = "Fields used if information about distributed tracing is available.";
 	m_info.m_fields = sinsp_filter_check_tracer_fields;
 	m_info.m_nfields = sizeof(sinsp_filter_check_tracer_fields) / sizeof(sinsp_filter_check_tracer_fields[0]);
-	m_cargname = NULL;
 }
 
-sinsp_filter_check* sinsp_filter_check_tracer::allocate_new()
+std::unique_ptr<sinsp_filter_check> sinsp_filter_check_tracer::allocate_new()
 {
-	return (sinsp_filter_check*) new sinsp_filter_check_tracer();
+	return std::make_unique<sinsp_filter_check_tracer>();
 }
 
-int32_t sinsp_filter_check_tracer::extract_arg(string fldname, string val, OUT const struct ppm_param_info** parinfo)
+int32_t sinsp_filter_check_tracer::extract_arg(string fldname, string val, OUT const ppm_param_info** parinfo)
 {
 	uint32_t parsed_len = 0;
 
@@ -104,7 +102,6 @@ int32_t sinsp_filter_check_tracer::extract_arg(string fldname, string val, OUT c
 		}
 
 		m_argname = val.substr(fldname.size() + 1);
-		m_cargname = m_argname.c_str();
 		parsed_len = (uint32_t)(fldname.size() + m_argname.size() + 1);
 		m_argid = TEXT_ARG_ID;
 	}

@@ -156,7 +156,7 @@ or GPL2.txt for full copies of the license.
 // CAPTURE_SCHED_PROC_FORK 
 ///////////////////////////////
 
-#if defined(__TARGET_ARCH_arm64) || defined(__TARGET_ARCH_s390) || defined(__TARGET_ARCH_riscv) defined(__TARGET_ARCH_loongarch)
+#if defined(__TARGET_ARCH_arm64) || defined(__TARGET_ARCH_s390) || defined(__TARGET_ARCH_riscv) || defined(__TARGET_ARCH_loongarch)
 	#define CAPTURE_SCHED_PROC_FORK 
 #endif
 

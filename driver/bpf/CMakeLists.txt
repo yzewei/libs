@@ -21,13 +21,13 @@ if(BUILD_BPF)
 	endif()
 
 	add_custom_target(bpf ALL
-		COMMAND make
-		COMMAND "${CMAKE_COMMAND}" -E copy_if_different probe.o "${CMAKE_CURRENT_BINARY_DIR}"
-		WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-		VERBATIM)
+			COMMAND make
+			COMMAND "${CMAKE_COMMAND}" -E copy_if_different probe.o "${CMAKE_CURRENT_BINARY_DIR}"
+			WORKING_DIRECTORY src
+			VERBATIM)
 endif()
 
-install(FILES
+set(BPF_SOURCES
 	bpf_helpers.h
 	builtins.h
 	filler_helpers.h
@@ -40,5 +40,27 @@ install(FILES
 	ring_helpers.h
 	missing_definitions.h
 	types.h
+)
+
+# Append driver headers too since they are used by bpf headers
+file(GLOB DRIVER_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/../*.h)
+list(APPEND BPF_SOURCES ${DRIVER_HEADERS})
+
+set(INSTALL_SET "")
+# Copy all needed sources under src folder in current binary dir
+# and add them to the set of installed files
+foreach(SOURCE IN LISTS BPF_SOURCES)
+	get_filename_component(FILENAME ${SOURCE} NAME)
+	configure_file(${SOURCE} src/${FILENAME} COPYONLY)
+	list(APPEND INSTALL_SET ${CMAKE_CURRENT_BINARY_DIR}/src/${FILENAME})
+endforeach()
+
+if(NOT DEFINED DRIVER_BPF_COMPONENT_NAME)
+	set(DRIVER_BPF_COMPONENT_NAME ${DRIVER_COMPONENT_NAME})
+endif()
+
+install(FILES
+	${INSTALL_SET}
 	DESTINATION "src/${DRIVER_PACKAGE_NAME}-${DRIVER_VERSION}/bpf"
-	COMPONENT ${DRIVER_COMPONENT_NAME})
+	COMPONENT ${DRIVER_BPF_COMPONENT_NAME}
+)

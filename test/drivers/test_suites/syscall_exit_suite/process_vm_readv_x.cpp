@@ -10,8 +10,8 @@ TEST(SyscallExit, process_vm_readvX_failure)
 
 	/*=============================== TRIGGER SYSCALL ===========================*/
 
-	char buf[16];
-	iovec iov[] = {{buf, 16}};
+	// Setting the iov to NULL will cause the failure of the syscall.
+	iovec *iov = NULL;
 	int32_t iovcnt = 7;
 
 	size_t res = syscall(__NR_process_vm_readv, getpid(), iov, iovcnt, iov, iovcnt, 0);

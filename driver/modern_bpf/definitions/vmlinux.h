@@ -14,4 +14,6 @@
 #include "s390x/vmlinux.h"
 #elif defined(__TARGET_ARCH_powerpc)
 #include "ppc64le/vmlinux.h"
+#elif defined(__TARGET_ARCH_loongarch)
+#include "loongarch64/vmlinux.h"
 #endif

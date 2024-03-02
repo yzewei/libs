@@ -32,6 +32,7 @@ set(modern_bpf_min_kver_map_x86_64 5.8)
 set(modern_bpf_min_kver_map_aarch64 5.8)
 set(modern_bpf_min_kver_map_s390x 5.8)
 set(modern_bpf_min_kver_map_ppc64le 5.8)
+set(modern_bpf_min_kver_map_loongarch64 5.10)
 if (LINUX_KERNEL_VERSION VERSION_LESS ${modern_bpf_min_kver_map_${CMAKE_HOST_SYSTEM_PROCESSOR}})
   message(WARNING "${MODERN_BPF_LOG_PREFIX} To run this driver you need a Linux kernel version >= ${modern_bpf_min_kver_map_${CMAKE_HOST_SYSTEM_PROCESSOR}} but actual kernel version is: ${UNAME_RESULT}")
 endif()
@@ -158,6 +159,7 @@ execute_process(COMMAND uname -m
   COMMAND sed "s/ppc64le/powerpc/"
   COMMAND sed "s/mips.*/mips/"
   COMMAND sed "s/s390x/s390/"
+  COMMAND sed "s/loongarch64/loongarch/"
   OUTPUT_VARIABLE ARCH_output
   ERROR_VARIABLE ARCH_error
   RESULT_VARIABLE ARCH_result

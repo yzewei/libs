@@ -29,7 +29,7 @@ else()
 	set(kmod_min_kver_map_s390x 2.6)
 	set(kmod_min_kver_map_riscv64 5.0)
 	set(kmod_min_kver_map_ppc64le 2.6)
-	set(kmod_min_kver_map_loongarch64 5.19)
+	set(kmod_min_kver_map_loongarch64 5.10)
 
 	if (LINUX_KERNEL_VERSION VERSION_LESS ${kmod_min_kver_map_${TARGET_ARCH}})
 		message(WARNING "[KMOD] To run this driver you need a Linux kernel version >= ${kmod_min_kver_map_${TARGET_ARCH}} but actual kernel version is: ${UNAME_RESULT}")

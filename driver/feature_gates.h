@@ -178,7 +178,7 @@ or GPL2.txt for full copies of the license.
 // CAPTURE_64BIT_ARGS_SINGLE_REGISTER 
 ///////////////////////////////
 
-#if defined(__x86_64__) || defined(__aarch64__)
+#if defined(__x86_64__) || defined(__aarch64__) || defined(__loongarch64)
 	#define CAPTURE_64BIT_ARGS_SINGLE_REGISTER
 #endif 
 
@@ -206,7 +206,7 @@ or GPL2.txt for full copies of the license.
 // CAPTURE_SCHED_PROC_FORK 
 ///////////////////////////////
 
-#if defined(__aarch64__) || defined(__s390x__) || defined(__riscv) || defined(__loongarch__)
+#if defined(__aarch64__) || defined(__s390x__) || defined(__riscv) || defined(__loongarch64)
 	#define CAPTURE_SCHED_PROC_FORK 
 #endif
 

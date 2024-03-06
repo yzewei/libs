@@ -756,3 +756,9 @@ const struct ppm_name_value bpf_commands[] = {
 	{"BPF_PROG_BIND_MAP", PPM_BPF_PROG_BIND_MAP},
 	{0,0},
 };
+
+const struct ppm_name_value delete_module_flags[] = {
+	{"O_NONBLOCK", PPM_DELETE_MODULE_O_NONBLOCK},
+	{"O_TRUNC", PPM_DELETE_MODULE_O_TRUNC},
+	{0, 0},
+};

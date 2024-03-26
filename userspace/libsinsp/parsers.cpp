@@ -2678,6 +2678,14 @@ void sinsp_parser::parse_open_openat_creat_exit(sinsp_evt *evt)
 				ino = evt->get_param(6)->as<uint64_t>();
 			}
 		}
+		else if(etype == PPME_SYSCALL_OPENAT2_X && evt->get_num_params() > 6)
+		{
+			dev = evt->get_param(6)->as<uint32_t>();
+			if (evt->get_num_params() > 7)
+			{
+				ino = evt->get_param(7)->as<uint64_t>();
+			}
+		}
 
 		//
 		// Compare with enter event parameters
@@ -2706,15 +2714,18 @@ void sinsp_parser::parse_open_openat_creat_exit(sinsp_evt *evt)
 	}
 	else if (etype == PPME_SYSCALL_OPEN_BY_HANDLE_AT_X)
 	{
-		/*
-		 * Flags
-		 */
 		flags = evt->get_param(2)->as<uint32_t>();
 
-		/*
-		 * Path
-		 */
 		name = evt->get_param(3)->as<std::string_view>();
+
+		if(etype == PPME_SYSCALL_OPEN_BY_HANDLE_AT_X && evt->get_num_params() > 4)
+		{
+			dev = evt->get_param(4)->as<uint32_t>();
+			if (evt->get_num_params() > 5)
+			{
+				ino = evt->get_param(5)->as<uint64_t>();
+			}
+		}
 
 		// since open_by_handle_at returns an absolute path we will always start at /
 		sdir = "";
@@ -3037,8 +3048,10 @@ void sinsp_parser::parse_bind_exit(sinsp_evt *evt)
 	//
 	if(family == PPM_AF_INET)
 	{
-		uint32_t ip = *(uint32_t *)(packed_data + 1);
-		uint16_t port = *(uint16_t *)(packed_data + 5);
+		uint32_t ip;
+		uint16_t port;
+		memcpy(&ip, packed_data + 1, sizeof(ip));
+		memcpy(&port, packed_data + 5, sizeof(port));
 		if(port > 0)
 		{
 			evt->get_fd_info()->m_type = SCAP_FD_IPV4_SERVSOCK;
@@ -3052,7 +3065,8 @@ void sinsp_parser::parse_bind_exit(sinsp_evt *evt)
 	else if (family == PPM_AF_INET6)
 	{
 		uint8_t* ip = packed_data + 1;
-		uint16_t port = *(uint16_t *)(packed_data + 17);
+		uint16_t port;
+		memcpy(&port, packed_data + 17, sizeof(uint16_t));
 		if(port > 0)
 		{
 			if(sinsp_utils::is_ipv4_mapped_ipv6(ip))
@@ -3060,7 +3074,7 @@ void sinsp_parser::parse_bind_exit(sinsp_evt *evt)
 				evt->get_fd_info()->m_type = SCAP_FD_IPV4_SERVSOCK;
 				evt->get_fd_info()->m_sockinfo.m_ipv4serverinfo.m_l4proto =
 					evt->get_fd_info()->m_sockinfo.m_ipv6info.m_fields.m_l4proto;
-				evt->get_fd_info()->m_sockinfo.m_ipv4serverinfo.m_ip = *(uint32_t *)(packed_data + 13);
+				memcpy(&evt->get_fd_info()->m_sockinfo.m_ipv4serverinfo.m_ip, packed_data + 13, sizeof(uint32_t));
 				evt->get_fd_info()->m_sockinfo.m_ipv4serverinfo.m_port = port;
 			}
 			else
@@ -3673,6 +3687,15 @@ void sinsp_parser::parse_socketpair_exit(sinsp_evt *evt)
 
 	fd2 = evt->get_param(2)->as<int64_t>();
 
+	/*
+	** In the case of 2 equal fds we ignore them (e.g. both equal to -1).
+	*/
+	if(fd1 == fd2)
+	{
+		evt->set_fd_info(NULL);
+		return;
+	}
+
 	source_address = evt->get_param(3)->as<uint64_t>();
 
 	peer_address = evt->get_param(4)->as<uint64_t>();
@@ -3846,10 +3869,10 @@ bool sinsp_parser::set_ipv6_addresses_and_ports(sinsp_fdinfo* fdinfo, uint8_t* p
 	uint16_t tsport, tdport;
 
 	memcpy((uint8_t *) tsip.m_b, packed_data + 1, sizeof(tsip.m_b));
-	tsport = *(uint16_t *)(packed_data + 17);
+	memcpy(&tsport, packed_data + 17, sizeof(tsport));
 
 	memcpy((uint8_t *) tdip.m_b, packed_data + 19, sizeof(tdip.m_b));
-	tdport = *(uint16_t *)(packed_data + 35);
+	memcpy(&tdport, packed_data + 35, sizeof(tdport));
 
 	if(fdinfo->m_type == SCAP_FD_IPV6_SOCK)
 	{
@@ -4161,12 +4184,25 @@ void sinsp_parser::parse_rw_exit(sinsp_evt *evt)
 
 						m_inspector->m_thread_manager->thread_to_scap(*evt->get_tinfo(), &scap_tinfo);
 
+						// Store current fd; it might get changed by scap_get_fdlist below.
+						int64_t fd = -1;
+						if (evt->get_fd_info())
+						{
+							fd = evt->get_fd_info()->m_fd;
+						}
+
 						// Get the new fds. The callbacks we have registered populate the fd table
 						// with the new file descriptors.
 						if (scap_get_fdlist(m_inspector->get_scap_platform(), &scap_tinfo, error) != SCAP_SUCCESS)
 						{
 							libsinsp_logger()->format(sinsp_logger::SEV_DEBUG, "scap_get_fdlist failed: %s, proc table will not be updated with new fds.",
 									error);
+						}
+
+						// Force refresh event fdinfo
+						if (fd != -1)
+						{
+							evt->set_fd_info(evt->get_tinfo()->get_fd(fd));
 						}
 					}
 				}
@@ -5135,7 +5171,13 @@ void sinsp_parser::parse_container_json_evt(sinsp_evt *evt)
 		const Json::Value& cniresult = container["cni_json"];
 		if(check_json_val_is_convertible(cniresult, Json::stringValue, "cni_json"))
 		{
-			container_info->m_pod_cniresult = cniresult.asString();
+			container_info->m_pod_sandbox_cniresult = cniresult.asString();
+		}
+
+		const Json::Value& pod_sandbox_id = container["pod_sandbox_id"];
+		if(check_json_val_is_convertible(pod_sandbox_id, Json::stringValue, "pod_sandbox_id"))
+		{
+			container_info->m_pod_sandbox_id = pod_sandbox_id.asString();
 		}
 
 		const Json::Value &port_mappings = container["port_mappings"];
@@ -5169,6 +5211,13 @@ void sinsp_parser::parse_container_json_evt(sinsp_evt *evt)
 		{
 			std::string val = container["labels"][*it].asString();
 			container_info->m_labels[*it] = val;
+		}
+
+		std::vector<std::string> pod_sandbox_labels = container["pod_sandbox_labels"].getMemberNames();
+		for(std::vector<std::string>::const_iterator it = pod_sandbox_labels.begin(); it != pod_sandbox_labels.end(); ++it)
+		{
+			std::string val = container["pod_sandbox_labels"][*it].asString();
+			container_info->m_pod_sandbox_labels[*it] = val;
 		}
 
 		const Json::Value& env_vars = container["env"];

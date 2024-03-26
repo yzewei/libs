@@ -154,6 +154,7 @@ public:
 
 	using PodSandboxStatusRequest = runtime::v1alpha2::PodSandboxStatusRequest;
 	using PodSandboxStatusResponse = runtime::v1alpha2::PodSandboxStatusResponse;
+	using PodSandboxStatus = runtime::v1alpha2::PodSandboxStatus;
 
 	using VersionRequest = runtime::v1alpha2::VersionRequest;
 	using VersionResponse = runtime::v1alpha2::VersionResponse;
@@ -184,6 +185,7 @@ public:
 
 	using PodSandboxStatusRequest = runtime::v1::PodSandboxStatusRequest;
 	using PodSandboxStatusResponse = runtime::v1::PodSandboxStatusResponse;
+	using PodSandboxStatus = runtime::v1::PodSandboxStatus;
 
 	using VersionRequest = runtime::v1::VersionRequest;
 	using VersionResponse = runtime::v1::VersionResponse;
@@ -214,38 +216,79 @@ public:
 	 */
 	sinsp_container_type get_cri_runtime_type() const;
 
+	//////////////////////////
+	// CRI API calls helpers
+	//////////////////////////
+
 	/**
 	 * @brief thin wrapper around CRI gRPC ContainerStatus call
 	 * @param container_id container ID
-	 * @param resp reference to the response (if the RPC is successful, it will be filled out)
-	 * @return status of the gRPC call
+	 * @param resp reference to the response of type api::ContainerStatusResponse (if the RPC is successful, it will be filled out)
+	 * @return grpc::Status, status of the gRPC call
 	 */
-	grpc::Status get_container_status(const std::string &container_id, typename api::ContainerStatusResponse &resp);
+	grpc::Status get_container_status_resp(const std::string &container_id, typename api::ContainerStatusResponse &resp);
 
 	/**
 	 * @brief thin wrapper around CRI gRPC ContainerStats call
 	 * @param container_id container ID
-	 * @param resp reference to the response (if the RPC is successful, it will be filled out)
-	 * @return status of the gRPC call
+	 * @param resp reference to the response of type api::ContainerStatusResponse (if the RPC is successful, it will be filled out)
+	 * @return grpc::Status, status of the gRPC call
 	 */
-	grpc::Status get_container_stats(const std::string &container_id, typename api::ContainerStatsResponse &resp);
+	grpc::Status get_container_stats_resp(const std::string &container_id, typename api::ContainerStatsResponse &resp);
 
 	/**
-	 * @brief get the size of the container's writable layer
+	 * @brief thin wrapper around CRI gRPC PodSandboxStatus call make request
+	 * @param pod_sandbox_id pod sandbox ID
+	 * @param resp reference to the response of type api::PodSandboxStatusResponse (if the RPC is successful, it will be filled out)
+	 * @return grpc::Status, status of the gRPC call
+	 */
+	grpc::Status get_pod_sandbox_status_resp(const std::string &pod_sandbox_id, typename api::PodSandboxStatusResponse &resp);
+
+	/**
+	 * @brief get image id info from CRI via extra API calls
+	 * @param image_ref the image ref from container metadata
+	 * @return image id if found, empty string otherwise
+	 */
+	std::string get_container_image_id(const std::string &image_ref);
+
+	/**
+	 * @brief get the size of the container's writable layer via ContainerStat API calls
 	 * @param container_id container ID
+	 * @note currently unused
 	 * @return the size of the writable layer in bytes. Returns an empty option on error
 	 */
 	std::optional<int64_t> get_writable_layer_size(const std::string &container_id);
 
+	///////////////////////////////////////////////////////////
+	// CRI response (ContainerStatusResponse) parsers helpers
+	///////////////////////////////////////////////////////////
+
+	/**
+	 * @brief fill out status base fields
+	 * @param status `status` field of the ContainerStatusResponse
+	 * @param container the container info to fill out
+	 * @return true if successful
+	 */
+	bool parse_cri_base(const typename api::ContainerStatus &status, sinsp_container_info &container);
+
 	/**
 	 * @brief fill out container image information based on CRI response
 	 * @param status `status` field of the ContainerStatusResponse
-	 * @param info `info` field of the ContainerStatusResponse
+	 * @param root Json::Value of status.info() at "info" of the ContainerStatusResponse
 	 * @param container the container info to fill out
 	 * @return true if successful
 	 */
 	bool parse_cri_image(const typename api::ContainerStatus &status,
-			     const google::protobuf::Map<std::string, std::string> &info,
+			     const Json::Value &root,
+			     sinsp_container_info &container);
+
+	/**
+	 * @brief fill out pod sandbox id, only valid when used w/ ContainerStatusResponse, not PodSandboxStatusResponse
+	 * @param root Json::Value of status.info() at "info" of the ContainerStatusResponse
+	 * @param container the container info to fill out
+	 * @return true if successful
+	 */
+	bool parse_cri_pod_sandbox_id_for_container(const Json::Value &root,
 			     sinsp_container_info &container);
 
 	/**
@@ -257,97 +300,125 @@ public:
 	bool parse_cri_mounts(const typename api::ContainerStatus &status, sinsp_container_info &container);
 
 	/**
-	 * @brief fill out container environment variables based on CRI response
-	 * @param info the `info` key of the `info` field of the ContainerStatusResponse
+	 * @brief fill out container environment variables based on CRI response, valid for containerd only
+	 * @param root Json::Value of status.info() at "info" of the ContainerStatusResponse
 	 * @param container the container info to fill out
 	 * @return true if successful
 	 *
 	 * Note: only containerd exposes this data
 	 */
-	bool parse_cri_env(const Json::Value &info, sinsp_container_info &container);
+	bool parse_cri_env(const Json::Value &root, sinsp_container_info &container);
 
 	/**
-	 * @brief fill out extra image info based on CRI response
-	 * @param info the `info` key of the `info` field of the ContainerStatusResponse
+	 * @brief fill out extra image info based on CRI response, valid for containerd only
+	 * @param root Json::Value of status.info() at "info" of the ContainerStatusResponse
 	 * @param container the container info to fill out
 	 * @return true if successful
 	 *
 	 * Note: only containerd exposes this data
 	 */
-	bool parse_cri_json_image(const Json::Value &info, sinsp_container_info &container);
+	bool parse_cri_json_imageid(const Json::Value &root, sinsp_container_info &container);
 
 	/**
 	 * @brief fill out extra container info (e.g. resource limits) based on CRI response
-	 * @param info the `info` key of the `info` field of the ContainerStatusResponse
+	 * @param root Json::Value of status.info() at "info" of the ContainerStatusResponse
 	 * @param container the container info to fill out
 	 * @return true if successful
 	 */
-	bool parse_cri_ext_container_info(const Json::Value &info, sinsp_container_info &container);
+	bool parse_cri_ext_container_info(const Json::Value &root, sinsp_container_info &container);
 
 	/**
 	 * @brief fill out extra container user info (e.g. configured uid) based on CRI response
-	 * @param info the `info` key of the `info` field of the ContainerStatusResponse
+	 * @param root Json::Value of status.info() at "info" of the ContainerStatusResponse
 	 * @param container the container info to fill out
 	 * @return true if successful
 	 *
 	 * Note: only containerd exposes this data
 	 */
-	bool parse_cri_user_info(const Json::Value &info, sinsp_container_info &container);
+	bool parse_cri_user_info(const Json::Value &root, sinsp_container_info &container);
 
 	/**
-	 * @brief get pod IP address
-	 * @param resp initialized api::PodSandboxStatusResponse of the pod sandbox
-	 * @return the IP address if possible, 0 otherwise (e.g. when the pod uses host netns)
+	 * @brief fill out container labels
+	 * @param status `status` field of the ContainerStatusResponse
+	 * @param container the container info to fill out
+	 * @return true if successful
 	 */
-	uint32_t get_pod_sandbox_ip(typename api::PodSandboxStatusResponse &resp);
+	bool parse_cri_labels(const typename api::ContainerStatus &status, sinsp_container_info &container);
+
+	///////////////////////////////////////////////////////////
+	// CRI response (PodSandboxStatus) parsers helpers
+	///////////////////////////////////////////////////////////
 
 	/**
-	 * @brief get unparsed JSON string with cni result of the pod sandbox from PodSandboxStatusResponse info()
-	 * field.
-	 * @param resp initialized api::PodSandboxStatusResponse of the pod sandbox
-	 * @param cniresult initialized cniresult
+	 * @brief fill out status base fields, overloaded w/ PodSandboxStatus
+	 * @param status `status` field of the PodSandboxStatusResponse
+	 * @param container the container info to fill out
+	 * @return true if successful
 	 */
-	void get_pod_info_cniresult(typename api::PodSandboxStatusResponse &resp, std::string &cniresult);
+	bool parse_cri_base(const typename api::PodSandboxStatus &status, sinsp_container_info &container);
 
 	/**
-	 * @brief make request and get PodSandboxStatusResponse and grpc::Status.
-	 * @param pod_sandbox_id ID of the pod sandbox
-	 * @param resp initialized api::PodSandboxStatusResponse of the pod sandbox
-	 * @param status initialized grpc::Status
+	 * @brief fill out pod sandbox id, only valid when used w/ PodSandboxStatus, not ContainerStatusResponse
+	 * @param container the container info to fill out
+	 * @note effectively assigning the existing container.m_full_id as pod sandbox ID
+	 * @return true if successful
 	 */
-	void get_pod_sandbox_resp(const std::string &pod_sandbox_id, typename api::PodSandboxStatusResponse &resp,
-				  grpc::Status &status);
+	bool parse_cri_pod_sandbox_id_for_podsandbox(sinsp_container_info &container);
 
 	/**
-	 * @brief get container IP address if possible, 0 otherwise (e.g. when the pod uses host netns),
-	 *  get unparsed JSON string with cni result of the pod sandbox from PodSandboxStatusResponse info() field.
-	 * @param container_id the container ID
-	 * @param container_ip initialized container_ip
-	 * @param cniresult initialized cniresult
-	 *
-	 * This method first finds the pod ID, then gets the IP address and also checks for cni result
-	 * of the pod sandbox container
+	 * @brief fill out container labels; overloaded w/ PodSandboxStatus
+	 * @param status `status` field of the PodSandboxStatusResponse
+	 * @param container the container info to fill out
+	 * @return true if successful
 	 */
-	void get_container_ip(const std::string &container_id, uint32_t &container_ip, std::string &cniresult);
+	bool parse_cri_labels(const typename api::PodSandboxStatus &status, sinsp_container_info &container);
 
 	/**
-	 * @brief get image id info from CRI
-	 * @param image_ref the image ref from container metadata
-	 * @return image id if found, empty string otherwise
+	 * @brief fill out pod sandbox labels
+	 * @param status `status` field of the PodSandboxStatusResponse
+	 * @param container the container info to fill out
+	 * @return true if successful
 	 */
-	std::string get_container_image_id(const std::string &image_ref);
+	bool parse_cri_pod_sandbox_labels(const typename api::PodSandboxStatus &status, sinsp_container_info &container);
 
 	/**
-	 * @brief fill in container metadata using the CRI API
-	 * @param key the async lookup key (includes container_id)
+	 * @brief fill out pod sandbox network info
+	 * @param status `status` field of the PodSandboxStatusResponse
+	 * @param root Json::Value of status.info() at "info" of the PodSandboxStatusResponse
+	 * @param container the container info to fill out
+	 * @return true if successful
+	 */
+	bool parse_cri_pod_sandbox_network(const typename api::PodSandboxStatus &status,
+			     const Json::Value &root,
+			     sinsp_container_info &container);
+
+
+	/////////////////////////////
+	// Generic parsers helpers
+	/////////////////////////////
+
+	/**
+	 * @brief get the Json::Value of status.info() at "info"
+	 * @param info status.info() Map
+	 * @return Json::Value, can be null
+	 */
+	Json::Value get_info_jvalue(const google::protobuf::Map<std::string, std::string> &info);
+
+
+	///////////////////////////////////////////////////////////////////
+	// Main CRI parse entrypoint (make API calls and parse responses)
+	///////////////////////////////////////////////////////////////////
+
+	/**
+	 * @brief fill in container metadata using the CRI API (`containerd` and `cri-o` container runtimes). 
+	 * This is the main CRI parser calling each parse_* helper after making the respective CRI API call(s).
+	 * @param key includes container_id, but container.m_id is used to make the CRI API calls
 	 * @param container the container info to fill
 	 * @return true on success, false on failure
 	 */
 	bool parse(const libsinsp::cgroup_limits::cgroup_limits_key &key, sinsp_container_info &container);
 
 private:
-	bool parse_containerd(const typename api::ContainerStatusResponse &status, sinsp_container_info &container);
-
 	std::unique_ptr<typename api::RuntimeService::Stub> m_cri;
 	std::unique_ptr<typename api::ImageService::Stub> m_cri_image;
 	sinsp_container_type m_cri_runtime_type;

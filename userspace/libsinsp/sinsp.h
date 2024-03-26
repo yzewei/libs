@@ -70,7 +70,7 @@ limitations under the License.
 #include <libsinsp/sinsp_public.h>
 #include <libsinsp/sinsp_suppress.h>
 #include <libsinsp/state/table_registry.h>
-#include <libsinsp/stats.h>
+#include <libsinsp/metrics_collector.h>
 #include <libsinsp/threadinfo.h>
 #include <libsinsp/tuples.h>
 #include <libsinsp/user.h>
@@ -465,17 +465,8 @@ public:
 	const scap_agent_info* get_agent_info() const;
 
 	/*!
-	  \brief Return sinsp stats v2 static size buffer w/ scap_stats_v2 schema.
-
-	  \note sinsp stats may be refactored near-term.
-	*/
-	scap_stats_v2* get_sinsp_stats_v2_buffer();
-	const scap_stats_v2* get_sinsp_stats_v2_buffer() const;
-
-	/*!
 	  \brief Return sinsp stats v2 containing continually updated counters around thread and fd state tables.
 
-	  \note sinsp stats may be refactored near-term.
 	*/
 	std::shared_ptr<sinsp_stats_v2> get_sinsp_stats_v2();
 	std::shared_ptr<const sinsp_stats_v2> get_sinsp_stats_v2() const;
@@ -505,7 +496,7 @@ public:
 	  \brief Fill the given structure with statistics about the currently
 	   open capture.
 
-	  \note sinsp stats may be refactored near-term, see also scap_stats_v2.
+	  \note sinsp stats may be refactored near-term, see also metrics_v2.
 	*/
 	void get_capture_stats(scap_stats* stats) const override;
 
@@ -520,9 +511,9 @@ public:
 
 	  \note sinsp stats may be refactored near-term.
 
-	  \return Pointer to a \ref scap_stats_v2 structure filled with the statistics.
+	  \return Pointer to a \ref metrics_v2 structure filled with the statistics.
 	*/
-	const struct scap_stats_v2* get_capture_stats_v2(uint32_t flags, uint32_t* nstats, int32_t* rc) const override;
+	const struct metrics_v2* get_capture_stats_v2(uint32_t flags, uint32_t* nstats, int32_t* rc) const override;
 
 	libsinsp::event_processor* m_external_event_processor;
 
@@ -1150,7 +1141,6 @@ private:
 	const scap_machine_info* m_machine_info;
 	const scap_agent_info* m_agent_info;
 	std::shared_ptr<sinsp_stats_v2> m_sinsp_stats_v2;
-	scap_stats_v2 m_sinsp_stats_v2_buffer[SINSP_MAX_STATS_V2];
 	uint32_t m_num_cpus;
 	bool m_flush_memory_dump;
 	bool m_large_envs_enabled;

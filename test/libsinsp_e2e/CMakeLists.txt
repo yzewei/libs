@@ -21,6 +21,9 @@ if(NOT DEFINED DRIVER_NAME)
     set(DRIVER_NAME "scap")
 endif()
 
+add_compile_options(${FALCOSECURITY_LIBS_USERSPACE_COMPILE_FLAGS})
+add_link_options(${FALCOSECURITY_LIBS_USERSPACE_LINK_FLAGS})
+
 # Create a libsinsp_test_var.h file with some variables used by our tests
 # for example the kmod path or the bpf path.
 configure_file (
@@ -29,10 +32,15 @@ configure_file (
 )
 
 add_executable(libsinsp_e2e_tests
+    container/container.cpp
+    container/container_cgroup.cpp
+    container/docker_utils.cpp
     event_capture.cpp
     main.cpp
+	paths.cpp
     subprocess.cpp
     sys_call_test.cpp
+    thread_state.cpp
 )
 
 if(BUILD_BPF)
@@ -78,4 +86,10 @@ endif("${CMAKE_SIZEOF_VOID_P}" EQUAL "8")
 
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/test_helper.sh ${CMAKE_CURRENT_BINARY_DIR}/test_helper.sh COPYONLY
+)
+
+file(COPY
+    ${CMAKE_CURRENT_SOURCE_DIR}/resources/
+    DESTINATION
+    ${CMAKE_CURRENT_BINARY_DIR}/resources/
 )

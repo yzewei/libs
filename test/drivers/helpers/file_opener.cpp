@@ -3,8 +3,10 @@
 
 file_opener::file_opener(const char* filename, int flags, int dirfd)
 {
+    errno = 0;
     m_fd = syscall(__NR_openat, dirfd, filename, flags, 0);
-	assert_syscall_state(SYSCALL_SUCCESS, "openat", m_fd, NOT_EQUAL, -1);
+    // Using the macro that deals with ENOSYS produces a build issue since GTEST_SKIP returns value in a ctor.
+    _assert_syscall_state(SYSCALL_SUCCESS, "openat", m_fd, NOT_EQUAL, -1);
     m_tmpfile_supported = (errno == EOPNOTSUPP);
     if(flags & O_DIRECTORY && strcmp(filename, ".") == 0)
     {
@@ -38,17 +40,17 @@ void file_opener::close()
     }
 }
 
-const bool file_opener::is_tmpfile_supported() const
+ bool file_opener::is_tmpfile_supported() const
 {
     return m_tmpfile_supported;
 }
 
-const int file_opener::get_fd() const
+ int file_opener::get_fd() const
 {
     return m_fd;
 }
 
-const int file_opener::get_flags() const
+ int file_opener::get_flags() const
 {
     return m_flags;
 }

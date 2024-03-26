@@ -924,7 +924,11 @@ void sinsp::on_new_entry_from_proc(void* context,
 
 		if(!sinsp_tinfo)
 		{
-			ASSERT(tinfo != NULL);
+			if (tinfo == NULL)
+			{
+				// we have an fd but no associated tinfo, skip it
+				return;
+			}
 
 			auto newti = build_threadinfo();
 			newti->init(tinfo);
@@ -1181,7 +1185,7 @@ int32_t sinsp::next(OUT sinsp_evt **puevt)
 	// it from userspace and update the result status
 	if (res == SCAP_SUCCESS)
 	{
-		res = m_suppress.process_event(evt->get_scap_evt(), evt->get_cpuid());
+		res = m_suppress.process_event(evt->get_scap_evt());
 	}
 
 	// in case we don't succeed, handle each scenario and return
@@ -1200,6 +1204,7 @@ int32_t sinsp::next(OUT sinsp_evt **puevt)
 			{
 				m_external_event_processor->process_event(NULL, libsinsp::EVENT_RETURN_EOF);
 			}
+			*puevt = evt;
 		}
 		else if(res == SCAP_UNEXPECTED_BLOCK)
 		{
@@ -1421,7 +1426,7 @@ bool sinsp::suppress_events_tid(int64_t tid)
 
 bool sinsp::check_suppressed(int64_t tid) const
 {
-	return m_suppress.is_suppressed_tid(tid, UINT16_MAX);
+	return m_suppress.is_suppressed_tid(tid);
 }
 
 void sinsp::set_docker_socket_path(std::string socket_path)
@@ -1736,16 +1741,6 @@ const scap_agent_info* sinsp::get_agent_info() const
 	return m_agent_info;
 }
 
-scap_stats_v2* sinsp::get_sinsp_stats_v2_buffer()
-{
-	return m_sinsp_stats_v2_buffer;
-}
-
-const scap_stats_v2* sinsp::get_sinsp_stats_v2_buffer() const
-{
-	return m_sinsp_stats_v2_buffer;
-}
-
 std::shared_ptr<sinsp_stats_v2> sinsp::get_sinsp_stats_v2()
 {
 	return m_sinsp_stats_v2;
@@ -1818,10 +1813,10 @@ void sinsp::print_capture_stats(sinsp_logger::severity sev) const
 		stats.n_drops_bug);
 }
 
-const scap_stats_v2* sinsp::get_capture_stats_v2(uint32_t flags, uint32_t* nstats, int32_t* rc) const
+const metrics_v2* sinsp::get_capture_stats_v2(uint32_t flags, uint32_t* nstats, int32_t* rc) const
 {
 	/* On purpose ignoring failures to not interrupt in case of stats retrieval failure. */
-	const scap_stats_v2* stats_v2 = scap_get_stats_v2(m_h, flags, nstats, rc);
+	const metrics_v2* stats_v2 = scap_get_stats_v2(m_h, flags, nstats, rc);
 	if (!stats_v2)
 	{
 		*nstats = 0;

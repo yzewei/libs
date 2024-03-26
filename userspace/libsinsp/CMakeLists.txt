@@ -23,6 +23,9 @@ if(NOT MSVC)
 	if(MUSL_OPTIMIZED_BUILD)
 		add_definitions(-DMUSL_OPTIMIZED)
 	endif()
+
+	add_compile_options(${FALCOSECURITY_LIBS_USERSPACE_COMPILE_FLAGS})
+	add_link_options(${FALCOSECURITY_LIBS_USERSPACE_LINK_FLAGS})
 endif()
 
 if(NOT DEFINED CHISEL_TOOL_LIBRARY_NAME)
@@ -95,6 +98,7 @@ add_library(sinsp
 	filter_check_list.cpp
 	ifinfo.cpp
 	memmem.cpp
+	metrics_collector.cpp
 	logger.cpp
 	parsers.cpp
 	${LIBS_DIR}/userspace/plugin/plugin_loader.c
@@ -106,7 +110,6 @@ add_library(sinsp
 	threadinfo.cpp
 	tuples.cpp
 	sinsp.cpp
-	stats.cpp
 	token_bucket.cpp
 	utils.cpp
 	value_parser.cpp

@@ -132,22 +132,25 @@ TEST_F(sys_call_test, open_close)
 
 	captured_event_callback_t callback = [&](const callback_param& param)
 	{
-		if ((0 == strcmp(param.m_evt->get_name(), "open") ||
-		     0 == strcmp(param.m_evt->get_name(), "openat")) &&
-		    param.m_evt->get_direction() == SCAP_ED_OUT)
+		if((0 == strcmp(param.m_evt->get_name(), "open") || 0 == strcmp(param.m_evt->get_name(), "openat") ||
+		   0 == strcmp(param.m_evt->get_name(), "close")) && "<f>/tmp" == param.m_evt->get_param_value_str("fd"))
 		{
-			EXPECT_EQ("<f>/tmp", param.m_evt->get_param_value_str("fd"));
+			callnum++;
 		}
-		callnum++;
 	};
 
 	ASSERT_NO_FATAL_FAILURE({ event_capture::run(test, callback, filter); });
-	EXPECT_EQ(4, callnum);
+	EXPECT_EQ(2, callnum);
 }
 
 TEST_F(sys_call_test, open_close_dropping)
 {
 	int callnum = 0;
+
+	before_open_t setup = [&](sinsp* inspector)
+	{
+		inspector->start_dropping_mode(1);
+	};
 
 	event_filter_t filter = [&](sinsp_evt* evt)
 	{
@@ -158,31 +161,26 @@ TEST_F(sys_call_test, open_close_dropping)
 
 	run_callback_t test = [](concurrent_object_handle<sinsp> inspector_handle)
 	{
-		{
-			std::scoped_lock inspector_handle_lock(inspector_handle);
-			inspector_handle->start_dropping_mode(1);
-		}
 		int fd = open("/tmp", O_RDONLY);
 		close(fd);
-		{
-			std::scoped_lock inspector_handle_lock(inspector_handle);
-			inspector_handle->stop_dropping_mode();
-		}
 	};
 
 	captured_event_callback_t callback = [&](const callback_param& param)
 	{
-		if ((0 == strcmp(param.m_evt->get_name(), "open") ||
-		     0 == strcmp(param.m_evt->get_name(), "openat")) &&
-		    param.m_evt->get_direction() == SCAP_ED_OUT)
+		if((0 == strcmp(param.m_evt->get_name(), "open") || 0 == strcmp(param.m_evt->get_name(), "openat") ||
+		   0 == strcmp(param.m_evt->get_name(), "close")) && "<f>/tmp" == param.m_evt->get_param_value_str("fd"))
 		{
-			EXPECT_EQ("<f>/tmp", param.m_evt->get_param_value_str("fd"));
+			callnum++;
 		}
-		callnum++;
 	};
 
-	ASSERT_NO_FATAL_FAILURE({ event_capture::run(test, callback, filter); });
-	EXPECT_EQ(4, callnum);
+	before_close_t cleanup = [&](sinsp* inspector)
+	{
+		inspector->stop_dropping_mode();
+	};
+
+	ASSERT_NO_FATAL_FAILURE({ event_capture::run(test, callback, filter, setup, cleanup); });
+	EXPECT_EQ(2, callnum);
 }
 
 TEST_F(sys_call_test, fcntl_getfd)
@@ -206,6 +204,11 @@ TEST_F(sys_call_test, fcntl_getfd_dropping)
 {
 	int callnum = 0;
 
+	before_open_t setup = [&](sinsp* inspector)
+	{
+		inspector->start_dropping_mode(1);
+	};
+
 	event_filter_t filter = [&](sinsp_evt* evt)
 	{
 		return 0 == strcmp(evt->get_name(), "fcntl") && m_tid_filter(evt);
@@ -213,20 +216,17 @@ TEST_F(sys_call_test, fcntl_getfd_dropping)
 
 	run_callback_t test = [](concurrent_object_handle<sinsp> inspector_handle)
 	{
-		{
-			std::scoped_lock inspector_handle_lock(inspector_handle);
-			inspector_handle->start_dropping_mode(1);
-		}
 		fcntl(0, F_GETFL);
-		{
-			std::scoped_lock inspector_handle_lock(inspector_handle);
-			inspector_handle->stop_dropping_mode();
-		}
 	};
 
 	captured_event_callback_t callback = [&](const callback_param& param) { callnum++; };
 
-	ASSERT_NO_FATAL_FAILURE({ event_capture::run(test, callback, filter); });
+	before_close_t cleanup = [&](sinsp* inspector)
+	{
+		inspector->stop_dropping_mode();
+	};
+
+	ASSERT_NO_FATAL_FAILURE({ event_capture::run(test, callback, filter, setup, cleanup); });
 	EXPECT_EQ(0, callnum);
 }
 
@@ -250,6 +250,11 @@ TEST_F(sys_call_test, bind_error_dropping)
 {
 	int callnum = 0;
 
+	before_open_t setup = [&](sinsp* inspector)
+	{
+		inspector->start_dropping_mode(1);
+	};
+
 	event_filter_t filter = [&](sinsp_evt* evt)
 	{
 		return 0 == strcmp(evt->get_name(), "bind") && m_tid_filter(evt);
@@ -257,20 +262,17 @@ TEST_F(sys_call_test, bind_error_dropping)
 
 	run_callback_t test = [](concurrent_object_handle<sinsp> inspector_handle)
 	{
-		{
-			std::scoped_lock inspector_handle_lock(inspector_handle);
-			inspector_handle->start_dropping_mode(1);
-		}
 		bind(0, NULL, 0);
-		{
-			std::scoped_lock inspector_handle_lock(inspector_handle);
-			inspector_handle->stop_dropping_mode();
-		}
 	};
 
 	captured_event_callback_t callback = [&](const callback_param& param) { callnum++; };
 
-	ASSERT_NO_FATAL_FAILURE({ event_capture::run(test, callback, filter); });
+	before_close_t cleanup = [&](sinsp* inspector)
+	{
+		inspector->stop_dropping_mode();
+	};
+
+	ASSERT_NO_FATAL_FAILURE({ event_capture::run(test, callback, filter, setup, cleanup); });
 	EXPECT_EQ(1, callnum);
 }
 
@@ -288,7 +290,19 @@ TEST_F(sys_call_test, close_badfd)
 		close(INT_MAX);
 	};
 
-	captured_event_callback_t callback = [&](const callback_param& param) { callnum++; };
+	captured_event_callback_t callback = [&](const callback_param& param)
+	{
+		int fd = param.m_evt->get_param(0)->as<int64_t>();
+		if(param.m_evt->get_direction() == SCAP_ED_IN &&
+		   (fd == -1 || fd == INT_MAX))
+		{
+			callnum++;
+		}
+		else if(param.m_evt->get_direction() == SCAP_ED_OUT && fd == -EBADF)
+		{
+			callnum++;
+		}
+	};
 
 	ASSERT_NO_FATAL_FAILURE({ event_capture::run(test, callback, filter); });
 	EXPECT_EQ(4, callnum);
@@ -298,6 +312,11 @@ TEST_F(sys_call_test, close_badfd_dropping)
 {
 	int callnum = 0;
 
+	before_open_t setup = [&](sinsp* inspector)
+	{
+		inspector->start_dropping_mode(1);
+	};
+
 	event_filter_t filter = [&](sinsp_evt* evt)
 	{
 		return 0 == strcmp(evt->get_name(), "close") && m_tid_filter(evt);
@@ -305,21 +324,30 @@ TEST_F(sys_call_test, close_badfd_dropping)
 
 	run_callback_t test = [](concurrent_object_handle<sinsp> inspector_handle)
 	{
-		{
-			std::scoped_lock inspector_handle_lock(inspector_handle);
-			inspector_handle->start_dropping_mode(1);
-		}
 		close(-1);
 		close(INT_MAX);
+	};
+
+	captured_event_callback_t callback = [&](const callback_param& param)
+	{
+		int fd = param.m_evt->get_param(0)->as<int64_t>();
+		if(param.m_evt->get_direction() == SCAP_ED_IN &&
+		   (fd == -1 || fd == INT_MAX))
 		{
-			std::scoped_lock inspector_handle_lock(inspector_handle);
-			inspector_handle->stop_dropping_mode();
+			callnum++;
+		}
+		else if(param.m_evt->get_direction() == SCAP_ED_OUT && fd == -EBADF)
+		{
+			callnum++;
 		}
 	};
 
-	captured_event_callback_t callback = [&](const callback_param& param) { callnum++; };
+	before_close_t cleanup = [&](sinsp* inspector)
+	{
+		inspector->stop_dropping_mode();
+	};
 
-	ASSERT_NO_FATAL_FAILURE({ event_capture::run(test, callback, filter); });
+	ASSERT_NO_FATAL_FAILURE({ event_capture::run(test, callback, filter, setup, cleanup); });
 	EXPECT_EQ(0, callnum);
 }
 
@@ -672,7 +700,7 @@ TEST_F(sys_call_test, mmap)
 				break;
 			}
 			default:
-				EXPECT_TRUE(false);
+				callnum--;
 			}
 		}
 		else if (type == PPME_SYSCALL_MUNMAP_X)
@@ -696,7 +724,7 @@ TEST_F(sys_call_test, mmap)
 				EXPECT_GE(enter_vmrss, enter_vmrss);
 				break;
 			default:
-				EXPECT_TRUE(false);
+				callnum--;
 			}
 		}
 		else if (type == PPME_SYSCALL_MMAP_E || type == PPME_SYSCALL_MMAP2_E)
@@ -751,7 +779,7 @@ TEST_F(sys_call_test, mmap)
 				}
 				break;
 			default:
-				EXPECT_TRUE(false);
+				callnum--;
 			}
 		}
 		else if (type == PPME_SYSCALL_MMAP_X || type == PPME_SYSCALL_MMAP2_X)
@@ -780,7 +808,7 @@ TEST_F(sys_call_test, mmap)
 				break;
 			}
 			default:
-				EXPECT_TRUE(false);
+				callnum--;
 			}
 		}
 	};
@@ -1182,62 +1210,6 @@ TEST_F(sys_call_test32, quotactl_ko)
 
 #endif
 
-TEST_F(sys_call_test, get_n_tracepoint_hit_smoke)
-{
-	int callnum = 0;
-	vector<long> old_evts;
-	event_filter_t filter = [&](sinsp_evt* evt) { return false; };
-	run_callback_t test = [&](concurrent_object_handle<sinsp> inspector_handle)
-	{
-		uint64_t t_finish = sinsp_utils::get_current_time_ns() + 500000000;
-		unsigned int ncpu;
-		vector<long> evts_vec;
-		{
-			std::scoped_lock inspector_handle_lock(inspector_handle);
-			ncpu = inspector_handle->get_machine_info()->num_cpus;
-			// just test the tracepoint hit
-			evts_vec = inspector_handle->get_n_tracepoint_hit();
-		}
-		for (unsigned j = 0; j < ncpu; ++j)
-		{
-			EXPECT_GE(evts_vec[j], 0) << "cpu=" << j;
-		}
-		while (sinsp_utils::get_current_time_ns() < t_finish)
-		{
-			tee(-1, -1, 0, 0);
-		}
-		vector<long> evts_vec2;
-		{
-			std::scoped_lock inspector_handle_lock(inspector_handle);
-			evts_vec2 = inspector_handle->get_n_tracepoint_hit();
-		}
-		for (unsigned j = 0; j < ncpu; ++j)
-		{
-			EXPECT_GE(evts_vec2[j], evts_vec[j]) << "cpu=" << j;
-		}
-		old_evts = evts_vec2;
-	};
-	captured_event_callback_t callback = [&](const callback_param& param) { callnum++; };
-	ASSERT_NO_FATAL_FAILURE({ event_capture::run(test, callback, filter); });
-
-	// rerun again to check that counters are properly reset when userspace shutdowns
-	test = [&](concurrent_object_handle<sinsp> inspector_handle)
-	{
-		// we can't compare by cpu because processes may be scheduled on other cpus
-		// let's just compare the whole sum for now
-		vector<long> evts_vec;
-		{
-			std::scoped_lock inspector_handle_lock(inspector_handle);
-			evts_vec = inspector_handle->get_n_tracepoint_hit();
-		}
-		auto new_count = std::accumulate(evts_vec.begin(), evts_vec.end(), 0);
-		auto old_count = std::accumulate(old_evts.begin(), old_evts.end(), 0);
-		EXPECT_LT(new_count, old_count);
-	};
-	ASSERT_NO_FATAL_FAILURE({ event_capture::run(test, callback, filter); });
-	EXPECT_EQ(0, callnum);
-}
-
 TEST_F(sys_call_test, setns_test)
 {
 	int callnum = 0;
@@ -1310,4 +1282,98 @@ TEST_F(sys_call_test, unshare_)
 	};
 	ASSERT_NO_FATAL_FAILURE({ event_capture::run(test, callback, filter); });
 	EXPECT_EQ(2, callnum);
+}
+
+TEST_F(sys_call_test, sendmsg_recvmsg_SCM_RIGHTS)
+{
+	int callnum = 0;
+	event_filter_t filter = [&](sinsp_evt* evt)
+	{
+		auto tinfo = evt->get_thread_info(true);
+		return tinfo->get_comm() == "libsinsp_e2e_te" && evt->get_type() == PPME_SOCKET_RECVMSG_X;
+	};
+	run_callback_t test = [&](concurrent_object_handle<sinsp> inspector_handle)
+	{
+		int server_sd, worker_sd, pair_sd[2];
+		int rc = socketpair(AF_UNIX, SOCK_DGRAM, 0, pair_sd);
+		ASSERT_GE(rc, 0);
+		server_sd = pair_sd[0];
+		worker_sd = pair_sd[1];
+
+		auto child = fork();
+		if (child == 0)
+		{
+			struct msghdr child_msg = {};
+			struct cmsghdr *cmsghdr;
+			struct iovec iov[1];
+			char buf[CMSG_SPACE(sizeof(int))], c;
+
+			iov[0].iov_base = &c;
+			iov[0].iov_len = sizeof(c);
+			memset(buf, 0x0d, sizeof(buf));
+			cmsghdr = (struct cmsghdr *)buf;
+			cmsghdr->cmsg_len = CMSG_LEN(sizeof(int));
+			cmsghdr->cmsg_level = SOL_SOCKET;
+			cmsghdr->cmsg_type = SCM_RIGHTS;
+			child_msg.msg_iov = iov;
+			child_msg.msg_iovlen = sizeof(iov) / sizeof(iov[0]);
+			child_msg.msg_control = cmsghdr;
+			child_msg.msg_controllen = CMSG_LEN(sizeof(int));
+			rc = recvmsg(worker_sd, &child_msg, 0);
+			ASSERT_GE(rc, 0);
+			// _exit prevents asan from complaining for a false positive memory leak.
+			_exit(0);
+		}
+		else
+		{
+			struct msghdr parent_msg = {};
+			struct cmsghdr *cmsghdr;
+			struct iovec iov[1];
+			int *p;
+			char buf[CMSG_SPACE(sizeof(int))], c;
+
+			FILE *f = tmpfile();
+			ASSERT_NE(nullptr, f);
+			int fd = fileno(f);
+
+			c = '*';
+			iov[0].iov_base = &c;
+			iov[0].iov_len = sizeof(c);
+			memset(buf, 0x0b, sizeof(buf));
+			cmsghdr = (struct cmsghdr *)buf;
+			cmsghdr->cmsg_len = CMSG_LEN(sizeof(int));
+			cmsghdr->cmsg_level = SOL_SOCKET;
+			cmsghdr->cmsg_type = SCM_RIGHTS;
+			parent_msg.msg_iov = iov;
+			parent_msg.msg_iovlen = sizeof(iov) / sizeof(iov[0]);
+			parent_msg.msg_control = cmsghdr;
+			parent_msg.msg_controllen = CMSG_LEN(sizeof(int));
+			p = (int *)CMSG_DATA(cmsghdr);
+			*p = fd;
+
+			rc = sendmsg(server_sd, &parent_msg, 0);
+			ASSERT_GE(rc, 0);
+			waitpid(child, NULL, 0);
+			fclose(f);
+		}
+	};
+	captured_event_callback_t callback = [&](const callback_param& param)
+	{
+		sinsp_evt* e = param.m_evt;
+		if (e->get_num_params() >= 5)
+		{
+			auto parinfo = e->get_param(4);
+			if(parinfo->m_len > sizeof(cmsghdr))
+			{
+				cmsghdr cmsg = {};
+				memcpy(&cmsg, parinfo->m_val, sizeof(cmsghdr));
+				if(cmsg.cmsg_type == SCM_RIGHTS)
+				{
+					++callnum;
+				}
+			}
+		}
+	};
+	ASSERT_NO_FATAL_FAILURE({ event_capture::run(test, callback, filter); });
+	EXPECT_EQ(1, callnum);
 }

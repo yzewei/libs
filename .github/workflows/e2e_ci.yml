@@ -1,11 +1,10 @@
-name: e2e CI
+name: libsinsp e2e CI
 on:
   pull_request:
   push:
     branches:
       - master
       - 'release/**'
-      - 'maintainers/**'
   workflow_dispatch:
 
 # Checks if any concurrent jobs under the same pull request or branch are being executed
@@ -14,13 +13,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test-e2e:
-    name: test-e2e-${{ matrix.arch }} 😇 (system_deps)
+  build-test-e2e:
+    name: build-test-e2e-${{ matrix.arch }} 😇 (bundled_deps)
     runs-on: ${{ (matrix.arch == 'arm64' && 'actuated-arm64-8cpu-16gb') || 'ubuntu-22.04' }}
     strategy:
       matrix:
         arch: [amd64, arm64]
-        driver: [ {name: kmod, option: -k}, {name: bpf, option: -b}, {name: modern-bpf, option: -m} ]
       fail-fast: false
     steps:
       - name: Checkout Libs ⤵️
@@ -37,6 +35,7 @@ jobs:
             clang-14 llvm-14 \
             git \
             clang \
+            ccache \
             llvm \
             pkg-config \
             autoconf \
@@ -75,31 +74,82 @@ jobs:
         run: |
           sudo apt install -y --no-install-recommends linux-headers-$(uname -r) gcc-multilib g++-multilib
 
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.3
+
       - name: Build e2e tests 🏗️
+        env:
+          SCCACHE_GHA_ENABLED: "true"
         run: |
           mkdir -p build
           cd build && \
             cmake \
+                -DCMAKE_C_COMPILER_LAUNCHER=sccache \
+                -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
                 -DBUILD_BPF=ON \
-                -DUSE_BUNDLED_DEPS=OFF \
+                -DUSE_BUNDLED_DEPS=ON \
+                -DUSE_ASAN=ON \
+                -DUSE_UBSAN=ON \
                 -DENABLE_LIBSINSP_E2E_TESTS=ON \
                 -DBUILD_LIBSCAP_MODERN_BPF=ON \
                 -DBUILD_LIBSCAP_GVISOR=OFF \
                 -DUSE_BUNDLED_LIBBPF=ON \
                 -DUSE_BUNDLED_GTEST=ON \
                 ..
-          make -j6
+          make -j6 libsinsp_e2e_tests
+          cd ..
+
+      - name: Cache build
+        uses: actions/cache/save@v3
+        if: always()
+        id: cache
+        with:
+          path: build
+          key: build-e2e-${{ matrix.arch }}-${{ github.run_id }}
+
+  test-e2e:
+    name: test-e2e-${{ matrix.arch }}-${{ matrix.driver.name }} 😇 (bundled_deps)
+    needs: [build-test-e2e]
+    runs-on: ${{ (matrix.arch == 'arm64' && 'actuated-arm64-8cpu-16gb') || 'ubuntu-22.04' }}
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+        driver: [ {name: kmod, option: -k}, {name: bpf, option: -b}, {name: modern-bpf, option: -m} ]
+      fail-fast: false
+    steps:
+      - name: Restore build
+        id: cache
+        uses: actions/cache/restore@v3
+        with:
+          path: build
+          key: build-e2e-${{ matrix.arch }}-${{ github.run_id }}
+          restore-keys: build-e2e-
+          
+      - name: Fix kernel mmap rnd bits
+        # Asan in llvm 14 provided in ubuntu 22.04 is incompatible with
+        # high-entropy ASLR in much newer kernels that GitHub runners are
+        # using leading to random crashes: https://reviews.llvm.org/D148280
+        run: sudo sysctl vm.mmap_rnd_bits=28    
+
+      - name: Install multilib
+        if: matrix.arch == 'amd64'
+        run: |
+          sudo apt install -y --no-install-recommends gcc-multilib g++-multilib
 
       - name: Run e2e tests with ${{ matrix.driver.name }} 🏎️
         if: matrix.arch == 'amd64'
+        env:
+          UBSAN_OPTIONS: print_stacktrace=1
         run: |
           cd build/test/libsinsp_e2e/
-          sudo ./libsinsp_e2e_tests ${{ matrix.driver.option }}
+          sudo -E ./libsinsp_e2e_tests ${{ matrix.driver.option }}
 
         # the actuated arm64 workers doesn't have the CONFIG_QFMT_V2 flag
         # which is needed for the quotactl_ok test (cmd=QQUOTA_ON + id=QFMT_VFS_V0).
       - name: Run e2e tests with ${{ matrix.driver.name }} 🏎️
         if: matrix.arch == 'arm64'
+        env:
+          UBSAN_OPTIONS: print_stacktrace=1
         run: |
           cd build/test/libsinsp_e2e/
-          sudo ./libsinsp_e2e_tests ${{ matrix.driver.option }} --gtest_filter=-sys_call_test.quotactl_ok
+          sudo -E ./libsinsp_e2e_tests ${{ matrix.driver.option }} --gtest_filter=-sys_call_test.quotactl_ok

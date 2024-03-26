@@ -854,11 +854,10 @@ static __always_inline unsigned long bpf_get_mm_counter(struct mm_struct *mm,
 {
 	long val;
 
-	// See 6.2 kernel commit: https://github.com/torvalds/linux/commit/f1a7941243c102a44e8847e3b94ff4ff3ec56f25
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0)
-	bpf_probe_read_kernel(&val, sizeof(val), &mm->rss_stat.count[member]);
-#else
+#ifdef HAS_RSS_STAT_ARRAY
 	bpf_probe_read_kernel(&val, sizeof(val), &mm->rss_stat[member].count);
+#else
+	bpf_probe_read_kernel(&val, sizeof(val), &mm->rss_stat.count[member]);
 #endif
 	if (val < 0)
 		val = 0;
@@ -1224,7 +1223,7 @@ FILLER(sys_socketpair_x, true)
 	res = bpf_push_s64_to_ring(data, retval);
 	CHECK_RES(res);
 
-	if (retval >= 0) {
+	if (retval == 0) {
 		val = bpf_syscall_get_argument(data, 3);
 		if (bpf_probe_read_user(fds, 2 * sizeof(int), (void *)val))
 			return PPM_FAILURE_INVALID_USER_MEMORY;
@@ -1942,6 +1941,14 @@ static __always_inline int bpf_accumulate_argv_or_env(struct filler_data *data,
 		}
 
 		len = bpf_probe_read_user_str(&data->buf[off & SCRATCH_SIZE_HALF], SCRATCH_SIZE_HALF, arg);
+
+		// set trailing \0 if the arg is empty
+		if(len == 0)
+		{
+			data->buf[off & SCRATCH_SIZE_HALF] = 0;
+			len = 1;
+		}
+		
 		if (len == -EFAULT)
 			return PPM_FAILURE_INVALID_USER_MEMORY;
 
@@ -2347,6 +2354,7 @@ FILLER(proc_startupdate, true)
 		}
 	} else if (data->state->tail_ctx.evt_type == PPME_SYSCALL_EXECVE_19_X ||
 	           data->state->tail_ctx.evt_type == PPME_SYSCALL_EXECVEAT_X ) {
+
 		unsigned long val;
 		char **argv;
 
@@ -3265,6 +3273,8 @@ FILLER(sys_openat2_x, true)
 	uint32_t flags;
 	unsigned long val;
 	uint32_t mode;
+	unsigned long dev = 0;
+	unsigned long ino = 0;
 	long retval;
 	int32_t fd;
 	int res;
@@ -3330,7 +3340,21 @@ FILLER(sys_openat2_x, true)
 	 * resolve (extracted from open_how structure)
 	 * Note that we convert them into the ppm portable representation before pushing them to the ring
 	 */
-	return bpf_push_u32_to_ring(data, resolve);
+	res = bpf_push_u32_to_ring(data, resolve);
+	CHECK_RES(res);
+
+	bpf_get_fd_dev_ino(retval, &dev, &ino);
+
+	/*
+	 * dev
+	 */
+	res = bpf_push_u32_to_ring(data, dev);
+	CHECK_RES(res);
+
+	/*
+	 * ino
+	 */
+	return bpf_push_u64_to_ring(data, ino);
 }
 
 FILLER(sys_open_by_handle_at_x, true)
@@ -3368,7 +3392,15 @@ FILLER(sys_open_by_handle_at_x, true)
 	}
 
 	/* Parameter 4: path (type: PT_FSPATH) */
-	return bpf_push_empty_param(data);
+	res = bpf_push_empty_param(data);
+	CHECK_RES(res);
+
+	/* Parameter 5: dev (type: PT_UINT32) */
+	res = bpf_push_u32_to_ring(data, 0);
+	CHECK_RES(res);
+
+	/* Parameter 6: ino (type: PT_UINT64) */
+	return bpf_push_u64_to_ring(data, 0);
 }
 
 FILLER(open_by_handle_at_x_extra_tail_1, true)
@@ -3389,7 +3421,19 @@ FILLER(open_by_handle_at_x_extra_tail_1, true)
 	
 	/* Parameter 4: path (type: PT_FSPATH) */
 	char* filepath = bpf_d_path_approx(data, &(f->f_path));
-	return bpf_val_to_ring_mem(data,(unsigned long)filepath, KERNEL);
+	int res = bpf_val_to_ring_mem(data,(unsigned long)filepath, KERNEL);
+
+	unsigned long dev = 0;
+	unsigned long ino = 0;
+
+	bpf_get_fd_dev_ino(retval, &dev, &ino);
+
+	/* Parameter 5: dev (type: PT_UINT32) */
+	res = bpf_push_u32_to_ring(data, dev);
+	CHECK_RES(res);
+
+	/* Parameter 6: ino (type: PT_UINT64) */
+	return bpf_push_u64_to_ring(data, ino);
 }
 
 FILLER(sys_io_uring_setup_x, true)
@@ -3526,7 +3570,7 @@ FILLER(sys_io_uring_register_x, true)
 
 FILLER(sys_inotify_init_e, true)
 {
-	/* Parameter 1: flags (type: PT_FLAGS8) */
+	/* Parameter 1: flags (type: PT_UINT8) */
 	/* We have nothing to extract from the kernel here so we send `0`.
 	 * This is done to preserve the `PPME_SYSCALL_INOTIFY_INIT_E` event with 1 param.
 	 */
@@ -3758,7 +3802,7 @@ FILLER(sys_signalfd_e, true)
 	res = bpf_push_u32_to_ring(data, 0);
 	CHECK_RES(res);
 
-	/* Parameter 3: flags (type: PT_FLAGS8) */
+	/* Parameter 3: flags (type: PT_UINT8) */
 	/* The syscall `signalfd` has no flags! only `signalfd4` has the `flags` param.
 	 * For compatibility with the event definition here we send `0` as flags.
 	 */
@@ -4643,7 +4687,7 @@ FILLER(sys_eventfd_e, true)
 	int res = bpf_push_s64_to_ring(data, val);
 	CHECK_RES(res);
 
-	/* Parameter 2: flags (type: PT_FLAGS32) */
+	/* Parameter 2: flags (type: PT_UINT32) */
 	/* The syscall eventfd has no flags! only `eventfd2` has the `flags` param.
 	 * For compatibility with the event definition here we send `0` as flags.
 	 */
@@ -7164,7 +7208,7 @@ FILLER(sys_pidfd_getfd_x, true)
 	res = bpf_push_s64_to_ring(data, (int64_t)targetfd);
 	CHECK_RES(res);
 	
-	/* Parameter 4: flags (type: PT_FLAGS32) */
+	/* Parameter 4: flags (type: PT_UINT32) */
 	uint32_t flags = bpf_syscall_get_argument(data,2);
 	 /*
      The flags argument is reserved for future use.  Currently, it must be specified as 0.
@@ -7390,4 +7434,27 @@ FILLER(sys_process_vm_writev_x, true)
 
 	return res;
 }
+
+FILLER(sys_delete_module_x, true)
+{
+	long retval;
+	int res;
+
+	/* Parameter 1: res (type: PT_ERRNO) */
+	retval = bpf_syscall_get_retval(data->ctx);
+	res = bpf_push_s64_to_ring(data, (int32_t)retval);
+	CHECK_RES(res);
+
+	/* Parameter 2: name (type: PT_CHARBUF) */
+	unsigned long name = bpf_syscall_get_argument(data, 0);
+	res = bpf_val_to_ring(data, name);
+	CHECK_RES(res);
+
+	/* Parameter 3: flags (type: PT_FLAGS32) */
+	uint32_t flags = bpf_syscall_get_argument(data, 1);
+	res = bpf_push_u32_to_ring(data, delete_module_flags_to_scap(flags));
+
+	return res;
+}
+
 #endif

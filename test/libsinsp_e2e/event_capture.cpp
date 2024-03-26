@@ -28,40 +28,31 @@ limitations under the License.
 std::string event_capture::m_engine_string = KMOD_ENGINE;
 std::string event_capture::m_engine_path = "";
 unsigned long event_capture::m_buffer_dim = DEFAULT_DRIVER_BUFFER_BYTES_DIM;
+bool event_capture::inspector_ok = false;
 
 concurrent_object_handle<sinsp> event_capture::get_inspector_handle()
 {
-	return {m_inspector, m_inspector_mutex};
+	return {get_inspector(), m_inspector_mutex};
 }
 
-void event_capture::capture()
+void event_capture::init_inspector()
 {
-	std::unique_ptr<sinsp_cycledumper> dumper;
-	{  // Begin init synchronized section
-		std::scoped_lock init_lock(m_inspector_mutex, m_object_state_mutex);
+		get_inspector()->m_thread_manager->set_max_thread_table_size(m_max_thread_table_size);
+		get_inspector()->m_thread_timeout_ns = m_thread_timeout_ns;
+		get_inspector()->set_auto_threads_purging_interval_s(m_inactive_thread_scan_time_ns);
+		get_inspector()->set_auto_threads_purging(false);
 
-		m_inspector = new sinsp();
+		get_inspector()->set_get_procs_cpu_from_driver(true);
 
-		m_inspector->m_thread_manager->set_max_thread_table_size(m_max_thread_table_size);
-		m_inspector->m_thread_timeout_ns = m_thread_timeout_ns;
-		m_inspector->set_auto_threads_purging_interval_s(m_inactive_thread_scan_time_ns);
-		m_inspector->set_auto_threads_purging(false);
-
-		m_inspector->set_get_procs_cpu_from_driver(true);
-
-		m_param.m_inspector = m_inspector;
-
-		m_before_open(m_inspector);
-
-		ASSERT_FALSE(m_inspector->is_capture());
-		ASSERT_FALSE(m_inspector->is_live());
-		ASSERT_FALSE(m_inspector->is_nodriver());
+		ASSERT_FALSE(get_inspector()->is_capture());
+		ASSERT_FALSE(get_inspector()->is_live());
+		ASSERT_FALSE(get_inspector()->is_nodriver());
 
 		try
 		{
 			if (m_mode == SINSP_MODE_NODRIVER)
 			{
-				m_inspector->open_nodriver();
+				get_inspector()->open_nodriver();
 			}
 			else
 			{
@@ -73,33 +64,46 @@ void event_capture::capture()
 			m_start_failed = true;
 			m_start_failure_message =
 				"couldn't open inspector (maybe driver hasn't been loaded yet?) err=" +
-				m_inspector->getlasterr() + " exception=" + e.what();
+				get_inspector()->getlasterr() + " exception=" + e.what();
 			{
 				//std::unique_lock<std::mutex> lock(m_mutex);
 				m_capture_started = true;
 				m_condition_started.notify_one();
 			}
-			delete m_inspector;
 			return;
 		}
 
-		const ::testing::TestInfo* const test_info =
-		    ::testing::UnitTest::GetInstance()->current_test_info();
+		get_inspector()->set_debug_mode(true);
+		get_inspector()->set_hostname_and_port_resolution_mode(false);
+}
 
-		m_inspector->set_debug_mode(true);
-		m_inspector->set_hostname_and_port_resolution_mode(false);
+void event_capture::capture()
+{
+	const ::testing::TestInfo* const test_info =
+		::testing::UnitTest::GetInstance()->current_test_info();
+	std::unique_ptr<sinsp_cycledumper> dumper;
+	{
+		std::scoped_lock init_lock(m_inspector_mutex, m_object_state_mutex);
 
-		m_inspector->start_capture();
+		if(!inspector_ok)
+		{
+			init_inspector();
+			inspector_ok = true;
+		}
 
+		m_param.m_inspector = get_inspector();
+
+		m_before_open(get_inspector());
+
+		get_inspector()->start_capture();
 		if (m_mode != SINSP_MODE_NODRIVER)
 		{
 			m_dump_filename = std::string(LIBSINSP_TEST_CAPTURES_PATH) + test_info->test_case_name() + "_" +
 				test_info->name() + ".scap";
-			dumper = std::make_unique<sinsp_cycledumper>(m_inspector, m_dump_filename.c_str(),
+			dumper = std::make_unique<sinsp_cycledumper>(get_inspector(), m_dump_filename.c_str(),
 														 0, 0, 0, 0, true);
 		}
 	}  // End init synchronized section
-
 
 	bool signaled_start = false;
 	sinsp_evt* event;
@@ -107,7 +111,7 @@ void event_capture::capture()
 	int32_t next_result = SCAP_SUCCESS;
 	while (!m_capture_stopped && result && !::testing::Test::HasFatalFailure())
 	{
-		if (SCAP_SUCCESS == (next_result = m_inspector->next(&event)))
+		if (SCAP_SUCCESS == (next_result = get_inspector()->next(&event)))
 		{
 			result = handle_event(event);
 		}
@@ -127,7 +131,7 @@ void event_capture::capture()
 		uint32_t n_timeouts = 0;
 		while (result && !::testing::Test::HasFatalFailure())
 		{
-			next_result = m_inspector->next(&event);
+			next_result = get_inspector()->next(&event);
 			if (next_result == SCAP_TIMEOUT)
 			{
 				n_timeouts++;
@@ -155,7 +159,7 @@ void event_capture::capture()
 		}
 		{
 			std::scoped_lock inspector_next_lock(m_inspector_mutex);
-			while (SCAP_SUCCESS == m_inspector->next(&event))
+			while (SCAP_SUCCESS == get_inspector()->next(&event))
 			{
 				// just consume the remaining events
 				dumper->dump(event);
@@ -165,25 +169,17 @@ void event_capture::capture()
 
 	{  // Begin teardown synchronized section
 		std::scoped_lock teardown_lock(m_inspector_mutex, m_object_state_mutex);
-		m_before_close(m_inspector);
+		m_before_close(get_inspector());
 
-		m_inspector->stop_capture();
-
-		delete m_inspector;
-
+		get_inspector()->stop_capture();
 		m_capture_stopped = true;
 		m_condition_stopped.notify_one();
-
 	}  // End teardown synchronized section
 
 }
 
 void event_capture::stop_capture()
 {
-	if (m_inspector)
-	{
-		m_inspector->stop_capture();
-	}
 	{
 		std::scoped_lock init_lock(m_inspector_mutex, m_object_state_mutex);
 		m_capture_stopped = true;
@@ -244,7 +240,7 @@ handle_event(sinsp_evt* event)
 			m_param.m_evt = event;
 			m_captured_event_callback(m_param);
 		}
-		catch (...)
+		catch(...)
 		{
 			res = false;
 		}
@@ -268,7 +264,7 @@ void event_capture::open_engine(const std::string& engine_string, libsinsp::even
 #ifdef HAS_ENGINE_KMOD
 	else if(!engine_string.compare(KMOD_ENGINE))
 	{
-		m_inspector->open_kmod(m_buffer_dim);
+		get_inspector()->open_kmod(m_buffer_dim);
 	}
 #endif
 #ifdef HAS_ENGINE_BPF
@@ -279,13 +275,13 @@ void event_capture::open_engine(const std::string& engine_string, libsinsp::even
 			std::cerr << "You must specify the path to the bpf probe if you use the 'bpf' engine" << std::endl;
 			exit(EXIT_FAILURE);
 		}
-		m_inspector->open_bpf(event_capture::get_engine_path().c_str(), m_buffer_dim);
+		get_inspector()->open_bpf(event_capture::get_engine_path().c_str(), m_buffer_dim);
 	}
 #endif
 #ifdef HAS_ENGINE_MODERN_BPF
 	else if(!engine_string.compare(MODERN_BPF_ENGINE))
 	{
-		m_inspector->open_modern_bpf(m_buffer_dim);
+		get_inspector()->open_modern_bpf(m_buffer_dim);
 	}
 #endif
 	else

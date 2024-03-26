@@ -225,17 +225,23 @@ uint8_t* sinsp_filter_check_k8s::extract(sinsp_evt *evt, OUT uint32_t* len, bool
 	}
 
 	const auto container_info = m_inspector->m_container_manager.get_container(tinfo->m_container_id);
-	// No labels means no k8s metadata.
-	if(container_info == nullptr || container_info->m_labels.empty())
+	// No m_pod_sandbox_id means no k8s.
+	// m_pod_sandbox_id retrieved from the ContainerStatusResponse CRI API call.
+	if(container_info == nullptr || container_info->m_pod_sandbox_id.empty())
 	{
 		return NULL;
 	}
 
 	m_tstr.clear();
 
+	// Note: All fields are retrieved from the CRI API calls aka as part of the container engine lookups.
+	// There is no interaction w/ the Kubernetes Server in any way to retrieve these fields. As alternative explore the new `k8smeta` plugin.
+	// Comments explain the origin of each field (either ContainerStatusResponse or PodSandboxStatusResponse CRI API call).
+
 	switch(m_field_id)
 	{
 	case TYPE_K8S_POD_NAME:
+		// Retrieved from the ContainerStatusResponse CRI API call.
 		if(container_info->m_labels.count("io.kubernetes.pod.name") > 0)
 		{
 			m_tstr = container_info->m_labels.at("io.kubernetes.pod.name");
@@ -243,6 +249,7 @@ uint8_t* sinsp_filter_check_k8s::extract(sinsp_evt *evt, OUT uint32_t* len, bool
 		}
 		break;
 	case TYPE_K8S_NS_NAME:
+		// Retrieved from the ContainerStatusResponse CRI API call.
 		if(container_info->m_labels.count("io.kubernetes.pod.namespace") > 0)
 		{
 			m_tstr = container_info->m_labels.at("io.kubernetes.pod.namespace");
@@ -251,6 +258,7 @@ uint8_t* sinsp_filter_check_k8s::extract(sinsp_evt *evt, OUT uint32_t* len, bool
 		break;
 	case TYPE_K8S_POD_ID:
 	case TYPE_K8S_POD_UID:
+		// Retrieved from the ContainerStatusResponse CRI API call.
 		if(container_info->m_labels.count("io.kubernetes.pod.uid") > 0)
 		{
 			m_tstr = container_info->m_labels.at("io.kubernetes.pod.uid");
@@ -259,69 +267,86 @@ uint8_t* sinsp_filter_check_k8s::extract(sinsp_evt *evt, OUT uint32_t* len, bool
 		break;
 	case TYPE_K8S_POD_SANDBOX_ID:
 	case TYPE_K8S_POD_FULL_SANDBOX_ID:
-		// presence of io.kubernetes.sandbox.id is enforced based on the info.sandboxID in the container status response
-		if(container_info->m_labels.count("io.kubernetes.sandbox.id") > 0)
+		// Retrieved from the ContainerStatusResponse CRI API call.
+		m_tstr = container_info->m_pod_sandbox_id;
+		if(m_field_id == TYPE_K8S_POD_SANDBOX_ID)
 		{
-			m_tstr = container_info->m_labels.at("io.kubernetes.sandbox.id");
-			if(m_field_id == TYPE_K8S_POD_SANDBOX_ID)
+			if(m_tstr.size() > 12)
 			{
-				if(m_tstr.size() > 12)
-				{
-					m_tstr.resize(12);
-				}
+				m_tstr.resize(12);
 			}
-			RETURN_EXTRACT_STRING(m_tstr);
 		}
+		RETURN_EXTRACT_STRING(m_tstr);
 		break;
 	case TYPE_K8S_POD_LABEL:
 	case TYPE_K8S_POD_LABELS:
-		if(container_info->m_labels.count("io.kubernetes.sandbox.id") > 0)
+		// Requires s_cri_extra_queries enabled, which is the default for Falco.
+		// Note that m_pod_sandbox_labels, while part of the container struct, is retrieved from an extra PodSandboxStatusResponse call, not the ContainerStatusResponse CRI API call.
 		{
-			std::string sandbox_container_id;
-			sandbox_container_id = container_info->m_labels.at("io.kubernetes.sandbox.id");
-			if(sandbox_container_id.size() > 12)
+			sinsp_container_info::ptr_t sandbox_container_info;
+			if(container_info->m_pod_sandbox_cniresult.empty()) // more robust check than checking for empty labels
 			{
-				sandbox_container_id.resize(12);
+				// Fallback: Retrieve PodSandboxStatusResponse fields stored in explicit pod sandbox container
+				sandbox_container_info = m_inspector->m_container_manager.get_container(container_info->m_pod_sandbox_id.substr(0, 12));
 			}
-			const sinsp_container_info::ptr_t sandbox_container_info =
-				m_inspector->m_container_manager.get_container(sandbox_container_id);
-			if(sandbox_container_info && !sandbox_container_info->m_labels.empty())
+			if (m_field_id == TYPE_K8S_POD_LABEL)
 			{
-				if (m_field_id == TYPE_K8S_POD_LABEL && sandbox_container_info->m_labels.count(m_argname) > 0)
+				if(sandbox_container_info && sandbox_container_info->m_pod_sandbox_labels.count(m_argname) > 0) // fallback
 				{
-					m_tstr = sandbox_container_info->m_labels.at(m_argname);
-					RETURN_EXTRACT_STRING(m_tstr);
+					m_tstr = sandbox_container_info->m_pod_sandbox_labels.at(m_argname);
 				}
-				if (m_field_id == TYPE_K8S_POD_LABELS)
+				else if (container_info->m_pod_sandbox_labels.count(m_argname) > 0)
 				{
-					concatenate_container_labels(sandbox_container_info->m_labels, &m_tstr);
-					RETURN_EXTRACT_STRING(m_tstr);
+					m_tstr = container_info->m_pod_sandbox_labels.at(m_argname);
 				}
+				RETURN_EXTRACT_STRING(m_tstr);
 			}
-
+			else if (m_field_id == TYPE_K8S_POD_LABELS)
+			{
+				if(sandbox_container_info) // fallback
+				{
+					concatenate_container_labels(sandbox_container_info->m_pod_sandbox_labels, &m_tstr);
+				} else
+				{
+					concatenate_container_labels(container_info->m_pod_sandbox_labels, &m_tstr);
+				}
+				RETURN_EXTRACT_STRING(m_tstr);
+			}
 		}
 		break;
 	case TYPE_K8S_POD_IP:
-		// We populate this field only if we are in a k8s pod.
-		// If there is no uid label we assume we are not in a pod.
-		if(container_info->m_labels.count("io.kubernetes.pod.uid") <= 0)
+		// Requires s_cri_extra_queries enabled, which is the default for Falco.
+		// Note that m_pod_sandbox_labels, while part of the container struct, is retrieved from an extra PodSandboxStatusResponse call, not the ContainerStatusResponse CRI API call.
+		if(container_info->m_pod_sandbox_cniresult.empty()) // more robust check than checking for 0 in m_container_ip
 		{
-			return NULL;
+			// Fallback: Retrieve PodSandboxStatusResponse fields stored in pod sandbox container
+			const sinsp_container_info::ptr_t sandbox_container_info = m_inspector->m_container_manager.get_container(container_info->m_pod_sandbox_id.substr(0, 12));
+			if(sandbox_container_info)
+			{
+				m_u32val = htonl(sandbox_container_info->m_container_ip);
+			}
+		} else
+		{
+			m_u32val = htonl(container_info->m_container_ip);
 		}
-		m_u32val = htonl(container_info->m_container_ip);
 		char addrbuff[100];
 		inet_ntop(AF_INET, &m_u32val, addrbuff, sizeof(addrbuff));
 		m_tstr = addrbuff;
 		RETURN_EXTRACT_STRING(m_tstr);
 		break;
 	case TYPE_K8S_POD_CNIRESULT:
-		// We populate this field only if we are in a k8s pod.
-		// If there is no uid label we assume we are not in a pod.
-		if(container_info->m_labels.count("io.kubernetes.pod.uid") <= 0)
+		// Requires s_cri_extra_queries enabled, which is the default for Falco.
+		// Note that m_pod_sandbox_labels, while part of the container struct, is retrieved from an extra PodSandboxStatusResponse call, not the ContainerStatusResponse CRI API call.
+		if(container_info->m_pod_sandbox_cniresult.empty())
 		{
-			return NULL;
+			// Fallback: Retrieve PodSandboxStatusResponse fields stored in pod sandbox container
+			const sinsp_container_info::ptr_t sandbox_container_info = m_inspector->m_container_manager.get_container(container_info->m_pod_sandbox_id.substr(0, 12));
+			if(sandbox_container_info)
+			{
+				RETURN_EXTRACT_STRING(sandbox_container_info->m_pod_sandbox_cniresult);
+			}
 		}
-		RETURN_EXTRACT_STRING(container_info->m_pod_cniresult);
+		RETURN_EXTRACT_STRING(container_info->m_pod_sandbox_cniresult);
 		break;
 	default:
 		break;

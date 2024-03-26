@@ -1828,7 +1828,7 @@ int f_sys_socketpair_x(struct event_filler_arguments *args)
 	/*
 	 * If the call was successful, copy the FDs
 	 */
-	if (likely(retval >= 0)) {
+	if (likely(retval == 0)) {
 		/*
 		 * fds
 		 */
@@ -3127,7 +3127,7 @@ int f_sys_eventfd_e(struct event_filler_arguments *args)
 	res = val_to_ring(args, val, 0, false, 0);
 	CHECK_RES(res);
 
-	/* Parameter 2: flags (type: PT_FLAGS32) */
+	/* Parameter 2: flags (type: PT_UINT32) */
 	/* The syscall eventfd has no flags! only `eventfd2` has the `flags` param.
 	 * For compatibility with the event definition here we send `0` as flags.
 	 */
@@ -4960,6 +4960,8 @@ int f_sys_openat2_x(struct event_filler_arguments *args)
 	unsigned long flags;
 	unsigned long val;
 	unsigned long mode;
+	uint32_t dev = 0;
+	uint64_t ino = 0;
 	int res;
 	int32_t fd;
 	int64_t retval;
@@ -5030,6 +5032,20 @@ int f_sys_openat2_x(struct event_filler_arguments *args)
 	res = val_to_ring(args, resolve, 0, true, 0);
 	CHECK_RES(res);
 
+	get_fd_dev_ino(retval, &dev, &ino);
+
+	/*
+	 *  dev
+	 */
+	res = val_to_ring(args, dev, 0, false, 0);
+	CHECK_RES(res);
+
+	/*
+	 *  ino
+	 */
+	res = val_to_ring(args, ino, 0, false, 0);
+	CHECK_RES(res);
+
 	return add_sentinel(args);
 }
 
@@ -5096,6 +5112,8 @@ int f_sys_open_by_handle_at_x(struct event_filler_arguments *args)
 	unsigned long val = 0;
 	unsigned long flags = 0;
 	int res = 0;
+	uint32_t dev = 0;
+	uint64_t ino = 0;
 	long retval = 0;
 	char *pathname = NULL;
 	int32_t mountfd = 0;
@@ -5144,6 +5162,16 @@ int f_sys_open_by_handle_at_x(struct event_filler_arguments *args)
 	}
 
 	res = val_to_ring(args, (unsigned long)pathname, 0, false, 0);
+	CHECK_RES(res);
+
+	get_fd_dev_ino(retval, &dev, &ino);
+
+	/* Parameter 5: dev (type: PT_UINT32) */
+	res = val_to_ring(args, dev, 0, false, 0);
+	CHECK_RES(res);
+
+	/* Parameter 6: ino (type: PT_UINT64) */
+	res = val_to_ring(args, ino, 0, false, 0);
 	CHECK_RES(res);
 
 	return add_sentinel(args);
@@ -5306,7 +5334,7 @@ int f_sys_io_uring_register_x (struct event_filler_arguments *args)
 
 int f_sys_inotify_init_e(struct event_filler_arguments *args)
 {
-	/* Parameter 1: flags (type: PT_FLAGS8) */
+	/* Parameter 1: flags (type: PT_UINT8) */
 	/* We have nothing to extract from the kernel here so we send `0`.
 	 * This is done to preserve the `PPME_SYSCALL_INOTIFY_INIT_E` event with 1 param.
 	 */
@@ -5575,7 +5603,7 @@ int f_sys_signalfd_e(struct event_filler_arguments *args)
 	res = val_to_ring(args, 0, 0, false, 0);
 	CHECK_RES(res);
 
-	/* Parameter 3: flags (type: PT_FLAGS8) */
+	/* Parameter 3: flags (type: PT_UINT8) */
 	/* The syscall `signalfd` has no flags! only `signalfd4` has the `flags` param.
 	 * For compatibility with the event definition here we send `0` as flags.
 	 */
@@ -5682,12 +5710,14 @@ int f_sys_dup_e(struct event_filler_arguments *args)
 {
 	int res;
 	unsigned long val;
+	int32_t fd = 0;
 
 	/*
 	 * oldfd
 	 */
 	syscall_get_arguments_deprecated(args, 0, 1, &val);
-	res = val_to_ring(args, val, 0, false, 0);
+	fd = (int32_t) val;
+	res = val_to_ring(args, (int64_t)fd, 0, false, 0);
 	CHECK_RES(res);
 
 	return add_sentinel(args);
@@ -5697,7 +5727,7 @@ int f_sys_dup_x(struct event_filler_arguments *args)
 {
 	int res;
 	unsigned long val;
-
+	int32_t fd = 0;
 
 	int64_t retval = (int64_t)syscall_get_return_value(current, args->regs);
 	res = val_to_ring(args, retval, 0, false, 0);
@@ -5707,7 +5737,8 @@ int f_sys_dup_x(struct event_filler_arguments *args)
 	 * oldfd
 	 */
 	syscall_get_arguments_deprecated(args, 0, 1, &val);
-	res = val_to_ring(args, val, 0, false, 0);
+	fd = (int32_t) val;
+	res = val_to_ring(args, (int64_t)fd, 0, false, 0);
 	CHECK_RES(res);
 
 	return add_sentinel(args);
@@ -5717,12 +5748,14 @@ int f_sys_dup2_e(struct event_filler_arguments *args)
 {
 	int res;
 	unsigned long val;
+	int32_t fd = 0;
 
 	/*
 	 * oldfd
 	 */
 	syscall_get_arguments_deprecated(args, 0, 1, &val);
-	res = val_to_ring(args, val, 0, false, 0);
+	fd = (int32_t) val;
+	res = val_to_ring(args, (int64_t)fd, 0, false, 0);
 	CHECK_RES(res);
 
 	return add_sentinel(args);
@@ -5732,7 +5765,7 @@ int f_sys_dup2_x(struct event_filler_arguments *args)
 {
 	int res;
 	unsigned long val;
-
+	int32_t fd = 0;
 
 	int64_t retval = (int64_t)syscall_get_return_value(current, args->regs);
 	res = val_to_ring(args, retval, 0, false, 0);
@@ -5742,14 +5775,16 @@ int f_sys_dup2_x(struct event_filler_arguments *args)
 	 * oldfd
 	 */
 	syscall_get_arguments_deprecated(args, 0, 1, &val);
-	res = val_to_ring(args, val, 0, false, 0);
+	fd = (int32_t) val;
+	res = val_to_ring(args, (int64_t)fd, 0, false, 0);
 	CHECK_RES(res);
 	
 	/*
 	 * newfd
 	 */
 	syscall_get_arguments_deprecated(args, 1, 1, &val);
-	res = val_to_ring(args, val, 0, false, 0);
+	fd = (int32_t) val;
+	res = val_to_ring(args, (int32_t)fd, 0, false, 0);
 	CHECK_RES(res);
 
 	return add_sentinel(args);
@@ -5759,12 +5794,14 @@ int f_sys_dup3_e(struct event_filler_arguments *args)
 {
 	int res;
 	unsigned long val;
+	int32_t fd = 0;
 
 	/*
 	 * oldfd
 	 */
 	syscall_get_arguments_deprecated(args, 0, 1, &val);
-	res = val_to_ring(args, val, 0, false, 0);
+	fd = (int32_t) val;
+	res = val_to_ring(args, (int64_t)fd, 0, false, 0);
 	CHECK_RES(res);
 
 	return add_sentinel(args);
@@ -5774,6 +5811,7 @@ int f_sys_dup3_x(struct event_filler_arguments *args)
 {
 	int res;
 	unsigned long val;
+	int32_t fd = 0;
 
 	int64_t retval = (int64_t)syscall_get_return_value(current, args->regs);
 	res = val_to_ring(args, retval, 0, false, 0);
@@ -5783,14 +5821,16 @@ int f_sys_dup3_x(struct event_filler_arguments *args)
 	 * oldfd
 	 */
 	syscall_get_arguments_deprecated(args, 0, 1, &val);
-	res = val_to_ring(args, val, 0, false, 0);
+	fd = (int32_t) val;
+	res = val_to_ring(args, (int64_t)fd, 0, false, 0);
 	CHECK_RES(res);
 	
 	/*
 	 * newfd
 	 */
 	syscall_get_arguments_deprecated(args, 1, 1, &val);
-	res = val_to_ring(args, val, 0, false, 0);
+	fd = (int32_t) val;
+	res = val_to_ring(args, (int64_t)fd, 0, false, 0);
 	CHECK_RES(res);
 
 	/*
@@ -7918,7 +7958,7 @@ int f_sys_pidfd_getfd_x(struct event_filler_arguments *args)
 	res = val_to_ring(args, (int64_t)fd, 0, true, 0);
 	CHECK_RES(res);
 	
-	/* Parameter 4: flags (type: PT_FLAGS32) */
+	/* Parameter 4: flags (type: PT_UINT32) */
 	syscall_get_arguments_deprecated(args, 2, 1, &val);
 	res = val_to_ring(args, val, 0, true, 0);
 	CHECK_RES(res);
@@ -8209,6 +8249,32 @@ int f_sys_process_vm_writev_x(struct event_filler_arguments *args)
 		res = push_empty_param(args);
 		CHECK_RES(res);
 	}
+
+	return add_sentinel(args);
+}
+
+int f_sys_delete_module_x(struct event_filler_arguments *args)
+{
+	int64_t retval = 0;
+	int64_t res = 0;
+	uint32_t flags = 0;
+	unsigned long val = 0;
+	
+	/* Parameter 1: res (type: PT_ERRNO) */
+	retval = (int64_t) syscall_get_return_value(current, args->regs);
+	res = val_to_ring(args, (int64_t)retval, 0, false, 0);
+	CHECK_RES(res);
+
+	/* Parameter 2: name (type: PT_CHARBUF) */
+	syscall_get_arguments_deprecated(args, 0, 1, &val);
+	res = val_to_ring(args, val, 0, true, 0);
+	CHECK_RES(res);
+
+	/* Parameter 3: flags (type: PT_FLAGS32) */
+	syscall_get_arguments_deprecated(args, 1, 1, &val);
+	flags = delete_module_flags_to_scap(val);
+	res = val_to_ring(args, flags, 0, false, 0);
+	CHECK_RES(res);
 
 	return add_sentinel(args);
 }
